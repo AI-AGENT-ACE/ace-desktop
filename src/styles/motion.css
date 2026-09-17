@@ -1,0 +1,31 @@
+:root {
+  --theme-transition-duration: 300ms;
+  --motion-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 저장된 테마의 첫 화면은 즉시 표시하고 이후 변경부터 색상을 보간합니다. */
+html[data-motion-ready] body,
+html[data-motion-ready] body *,
+html[data-motion-ready] body *::before,
+html[data-motion-ready] body *::after {
+  transition-property: background-color, color, border-color, box-shadow, fill, stroke, filter;
+  transition-duration: var(--theme-transition-duration);
+  transition-timing-function: var(--motion-easing);
+}
+
+html[data-motion-ready] dialog::backdrop {
+  transition: background-color var(--theme-transition-duration) var(--motion-easing);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --theme-transition-duration: 0ms;
+  }
+  html[data-motion-ready] body,
+  html[data-motion-ready] body *,
+  html[data-motion-ready] body *::before,
+  html[data-motion-ready] body *::after,
+  html[data-motion-ready] dialog::backdrop {
+    transition: none !important;
+  }
+}
