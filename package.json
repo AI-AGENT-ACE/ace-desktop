@@ -10,6 +10,7 @@
     "format": "prettier --write src/api src/hooks src/types src/App.tsx src/main.tsx src/layouts/Sidebar.tsx src/features/chat src/features/trash src/features/settings src/features/auth src/features/voice src/features/system-actions scripts tests playwright.config.ts README.md docs/API_CONNECTION.md src/styles/api.css",
     "format:check": "prettier --check src/api src/hooks src/types src/App.tsx src/main.tsx src/layouts/Sidebar.tsx src/features/chat src/features/trash src/features/settings src/features/auth src/features/voice src/features/system-actions scripts tests playwright.config.ts README.md docs/API_CONNECTION.md src/styles/api.css",
     "test:e2e": "playwright test",
+    "test:auth": "playwright test --config playwright.auth.config.ts",
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {

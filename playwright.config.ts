@@ -18,7 +18,7 @@ export default defineConfig({
       cwd: '../ace-backend',
       url: 'http://127.0.0.1:3002/health',
       reuseExistingServer: false,
-      timeout: 60000,
+      timeout: 120000,
     },
     {
       command: 'npm run dev -- --host 127.0.0.1 --port 1430',
