@@ -3,24 +3,184 @@
   display: grid;
   place-items: center;
   overflow: auto;
-  padding: 24px;
+  min-height: 0;
+  padding: 32px 24px;
+  background: var(--surface);
+}
+.auth-content {
+  width: min(420px, 100%);
+  margin: auto;
 }
 .auth-card {
-  width: min(360px, 100%);
+  width: 100%;
+  padding: 32px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--background);
+  box-shadow: 0 8px 32px var(--soft-shadow);
 }
-.auth-card > img {
-  width: 64px;
-  height: 64px;
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.auth-brand img,
+.auth-splash img {
+  width: 72px;
+  height: 72px;
   object-fit: contain;
 }
 .auth-card h1 {
-  font-size: 24px;
+  margin: 0;
+  text-align: center;
+  font-size: 23px;
   font-weight: 500;
+}
+.auth-description {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  margin: 10px 0 28px;
+}
+.auth-card fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.auth-field {
+  margin-top: 18px;
+}
+.auth-field label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.auth-field label span {
+  color: var(--muted);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.auth-field input {
+  height: 44px;
+  font-size: 13px;
+}
+.auth-field input::placeholder {
+  color: var(--muted);
+}
+/* Edge/WebView2 adds its own reveal button inside password inputs. */
+.auth-field input::-ms-reveal {
+  display: none;
+}
+.auth-password {
+  position: relative;
+}
+.auth-password input {
+  padding-right: 44px;
+}
+.auth-password button {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 34px;
+  height: 34px;
+  color: var(--muted);
+}
+.auth-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 6px 0 0;
+}
+.auth-error {
+  color: var(--danger);
+  background: var(--surface);
+  border-left: 2px solid var(--danger);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  margin: 18px 0 0;
+  overflow-wrap: anywhere;
 }
 .auth-submit {
   width: 100%;
-  margin-top: 16px;
+  height: 44px;
+  margin-top: 24px;
   padding: 11px;
+}
+.auth-switch {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 24px 0 0;
+}
+.auth-switch button {
+  color: var(--accent);
+  padding: 5px 7px;
+  font-weight: 600;
+}
+.auth-card-signup {
+  padding: 20px 32px;
+}
+.auth-card-signup .auth-brand {
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.auth-card-signup .auth-brand img {
+  width: 56px;
+  height: 56px;
+}
+.auth-card-signup .auth-description {
+  margin-bottom: 14px;
+}
+.auth-card-signup .auth-field {
+  margin-top: 12px;
+}
+.auth-card-signup .auth-submit {
+  margin-top: 16px;
+}
+.auth-card-signup .auth-switch {
+  margin-top: 12px;
+}
+.auth-footer {
+  padding: 16px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 10px;
+  background: var(--surface);
+}
+.auth-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.auth-splash p {
+  margin: 0;
+}
+.auth-loading {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+.auth-window-notice {
+  font-size: 12px;
+  color: var(--danger);
+  text-align: center;
+}
+@media (max-width: 480px) {
+  .auth-screen {
+    padding: 20px 16px;
+  }
+  .auth-card {
+    padding: 24px;
+  }
 }
 .voice-window .voice-overlay {
   position: static;
