@@ -4,7 +4,6 @@ import {
   Search,
   Pin,
   MoreHorizontal,
-  Settings,
   Trash2,
   PanelLeftClose,
   MessageSquare,
@@ -14,6 +13,7 @@ import {
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 import type { useConversations } from '../hooks/useConversations';
 import type { Conversation } from '../types';
+import { ProfileMenu } from './ProfileMenu';
 export function Sidebar({
   query,
   profile,
@@ -76,7 +76,7 @@ export function Sidebar({
           </button>
         </div>
         <button className="new-chat" onClick={onNew} disabled={busy}>
-          <Plus size={19} />새 채팅<span>새로운 시작</span>
+          <Plus size={19} />새 채팅
         </button>
         <label className="search">
           <Search size={16} />
@@ -197,22 +197,7 @@ export function Sidebar({
         )}
       </div>
       <div className="sidebar-bottom">
-        <button onClick={onTrash}>
-          <Trash2 size={17} />
-          휴지통
-        </button>
-        <button onClick={onSettings}>
-          <Settings size={17} />
-          설정
-        </button>
-        <div className="profile">
-          <div className="avatar">A</div>
-          <div>
-            <strong>{profile}</strong>
-            <span>당신의 일상에, 조금 더 가까이</span>
-          </div>
-          <i className="status-dot" />
-        </div>
+        <ProfileMenu profile={profile} onSettings={onSettings} onTrash={onTrash} />
       </div>
     </aside>
   );

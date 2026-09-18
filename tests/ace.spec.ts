@@ -1,9 +1,131 @@
 import { test, expect } from '@playwright/test';
-import { login } from './helpers';
+import { login, openProfileItem } from './helpers';
+
+test('플러스 메뉴에서 텍스트 파일을 추가·제거하고 내용을 실제 메시지로 전송한다', async ({
+  page,
+}) => {
+  await page.route('**/health', (route) =>
+    route.fulfill({
+      json: {
+        status: 'ok',
+        database: 'connected',
+        ai: 'not_configured',
+        weather: 'not_configured',
+      },
+    }),
+  );
+  await login(page);
+  await page.getByRole('button', { name: '추가 기능', exact: true }).click();
+  await expect(page.getByRole('button', { name: '파일 추가', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '현재 볼륨 조회' })).toHaveCount(0);
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '파일 추가', exact: true }).click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'notes.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('회의 일정: 오후 3시'),
+  });
+  await expect(page.locator('.composer-attachment')).toContainText('notes.md');
+  await expect(page.locator('.conversation')).toHaveCount(0);
+  await page.getByRole('button', { name: '첨부 파일 제거' }).click();
+  await expect(page.locator('.composer-attachment')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '메시지 보내기' })).toBeDisabled();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'image.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('not supported'),
+  });
+  await expect(page.getByRole('alert')).toContainText('텍스트 파일');
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'notes.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('회의 일정: 오후 3시'),
+  });
+  await page.getByRole('textbox', { name: '메시지', exact: true }).fill('이 내용을 요약해줘');
+  await page.getByRole('button', { name: '메시지 보내기' }).click();
+  await expect(page.locator('.message.user')).toContainText('[첨부 파일: notes.md]');
+  await expect(page.locator('.message.user')).toContainText('회의 일정: 오후 3시');
+  await expect(page.locator('.composer-attachment')).toHaveCount(0);
+  await expect(page.locator('.conversation')).toHaveCount(1);
+});
+
+test('새 채팅은 빈 화면만 열고 첫 메시지 전송 시에만 대화방을 생성한다', async ({ page }) => {
+  await page.route('**/health', (route) =>
+    route.fulfill({
+      json: {
+        status: 'ok',
+        database: 'connected',
+        ai: 'not_configured',
+        weather: 'not_configured',
+      },
+    }),
+  );
+  let created = 0;
+  let sent = 0;
+  page.on('request', (request) => {
+    if (request.method() !== 'POST') return;
+    const path = new URL(request.url()).pathname;
+    if (path === '/conversations') created++;
+    if (/^\/conversations\/[^/]+\/messages$/.test(path)) sent++;
+  });
+  await login(page);
+  await expect(page.locator('.sidebar-state')).toContainText('아직 대화가 없습니다.');
+  const newChat = page.getByRole('button', { name: '새 채팅', exact: true });
+  for (let index = 0; index < 3; index++) await newChat.click();
+  await expect(page.getByRole('heading', { name: '무엇을 도와드릴까요?' })).toBeVisible();
+  await expect(page.locator('.conversation')).toHaveCount(0);
+  expect(created).toBe(0);
+  const input = page.getByRole('textbox', { name: '메시지', exact: true });
+  await input.fill('작성 중인 초안');
+  await newChat.click();
+  await expect(input).toHaveValue('');
+  expect(created).toBe(0);
+  await input.fill('첫 메시지로 방 만들기');
+  await page.getByRole('button', { name: '메시지 보내기' }).click();
+  await expect(page.locator('.message.user')).toContainText('첫 메시지로 방 만들기');
+  await expect(page.locator('.conversation')).toHaveCount(1);
+  expect(created).toBe(1);
+  expect(sent).toBe(1);
+  await newChat.click();
+  await expect(page.getByRole('heading', { name: '무엇을 도와드릴까요?' })).toBeVisible();
+  await expect(input).toHaveValue('');
+  await expect(page.locator('.conversation')).toHaveCount(1);
+  expect(created).toBe(1);
+  await page.getByRole('button', { name: '새 대화', exact: true }).click();
+  await expect(page.locator('.message.user')).toContainText('첫 메시지로 방 만들기');
+});
+
+test('기본 창에서 로고가 잘리지 않고 날씨·설정 카드가 각 동작을 수행한다', async ({ page }) => {
+  await page.setViewportSize({ width: 1080, height: 720 });
+  await login(page);
+  const logo = page.locator('.welcome-mark img');
+  await expect(logo).toBeInViewport({ ratio: 1 });
+  const bounds = await page.evaluate(() => ({
+    logo: document.querySelector('.welcome-mark img')!.getBoundingClientRect().top,
+    welcome: document.querySelector('.welcome')!.getBoundingClientRect().top,
+  }));
+  expect(bounds.logo).toBeGreaterThanOrEqual(bounds.welcome);
+  await page.screenshot({ path: 'artifacts/welcome-default.png' });
+  await page.getByRole('button', { name: /환경 설정하기/ }).click();
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: '설정', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.setViewportSize({ width: 1080, height: 500 });
+  await page.locator('.welcome').evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(logo).toBeInViewport({ ratio: 1 });
+  await page.setViewportSize({ width: 1080, height: 720 });
+  await page.getByRole('button', { name: /오늘 날씨 알아보기/ }).click();
+  await expect(page.locator('.message.user')).toContainText('오늘 날씨 알려줘');
+});
 
 test('실제 API: 대화와 메시지 저장, 이름 변경, 고정, 휴지통 복구와 영구 삭제', async ({ page }) => {
   await login(page);
-  await page.getByRole('button', { name: '새 채팅 새로운 시작' }).click();
+  await page.getByRole('button', { name: '새 채팅', exact: true }).click();
   await page.getByRole('textbox', { name: '메시지', exact: true }).fill('실제 DB 메시지 검증');
   await page.getByRole('button', { name: '메시지 보내기' }).click();
   await expect(page.locator('.message.user')).toContainText('실제 DB 메시지 검증');
@@ -22,14 +144,14 @@ test('실제 API: 대화와 메시지 저장, 이름 변경, 고정, 휴지통 �
   await page.getByRole('button', { name: '검증용 대화 메뉴' }).click();
   await page.getByRole('button', { name: '삭제', exact: true }).click();
   await expect(page.getByRole('heading', { name: '무엇을 도와드릴까요?' })).toBeVisible();
-  await page.getByRole('button', { name: '휴지통', exact: true }).click();
+  await openProfileItem(page, '휴지통');
   await page.getByRole('button', { name: '검증용 대화 복구' }).click();
   await expect(page.getByRole('button', { name: '검증용 대화 복구' })).not.toBeVisible();
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await page.getByRole('button', { name: '검증용 대화 메뉴' }).click();
   await page.getByRole('button', { name: '삭제', exact: true }).click();
   await expect(page.getByRole('button', { name: '검증용 대화 메뉴' })).not.toBeVisible();
-  await page.getByRole('button', { name: '휴지통', exact: true }).click();
+  await openProfileItem(page, '휴지통');
   await page.getByRole('button', { name: '검증용 대화 영구 삭제' }).click();
   await page.getByRole('button', { name: '영구 삭제', exact: true }).click();
   await expect(page.getByRole('heading', { name: '휴지통이 비어 있습니다' })).toBeVisible();
@@ -125,16 +247,43 @@ test('목록 페이지 경계의 대화를 삭제해도 다음 페이지 커서�
 
 test('계정 설정과 권한 저장, 재조회, 로그아웃', async ({ page }) => {
   await login(page);
-  await page.getByRole('button', { name: '설정', exact: true }).click();
+  await openProfileItem(page, '설정');
   await page.getByRole('combobox', { name: '응답 언어' }).selectOption('en');
   await expect(page.getByRole('combobox', { name: '응답 언어' })).toBeEnabled();
-  await page.getByRole('combobox', { name: 'weather.current 권한' }).selectOption('ASK');
-  await expect(page.getByRole('combobox', { name: 'weather.current 권한' })).toBeEnabled();
+  await page.getByRole('button', { name: /권한 설정하기/ }).click();
+  await page
+    .getByRole('group', { name: '날씨 조회' })
+    .getByRole('radio', { name: '확인', exact: true })
+    .check();
+  await expect(
+    page
+      .getByRole('group', { name: '날씨 조회' })
+      .getByRole('radio', { name: '확인', exact: true }),
+  ).toBeEnabled();
+  await page.route('**/settings/permissions/weather.current', (route) =>
+    route.fulfill({ status: 503, json: { code: 'DATABASE_UNAVAILABLE' } }),
+  );
+  await page
+    .getByRole('group', { name: '날씨 조회' })
+    .getByRole('radio', { name: '항상 허용', exact: true })
+    .check();
+  await expect(page.getByRole('alert')).toContainText('데이터베이스');
+  await expect(
+    page
+      .getByRole('group', { name: '날씨 조회' })
+      .getByRole('radio', { name: '확인', exact: true }),
+  ).toBeChecked();
+  await page.unroute('**/settings/permissions/weather.current');
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await page.reload();
-  await page.getByRole('button', { name: '설정', exact: true }).click();
+  await openProfileItem(page, '설정');
   await expect(page.getByRole('combobox', { name: '응답 언어' })).toHaveValue('en');
-  await expect(page.getByRole('combobox', { name: 'weather.current 권한' })).toHaveValue('ASK');
+  await page.getByRole('button', { name: /권한 설정하기/ }).click();
+  await expect(
+    page
+      .getByRole('group', { name: '날씨 조회' })
+      .getByRole('radio', { name: '확인', exact: true }),
+  ).toBeChecked();
   await page.getByRole('button', { name: '로그아웃', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ACE에 로그인' })).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem('ace-auth-session'))).toBeNull();

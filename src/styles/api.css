@@ -1,3 +1,190 @@
+.composer textarea:focus,
+.composer textarea:focus-visible,
+.sidebar .search input:focus,
+.sidebar .search input:focus-visible {
+  outline: none;
+}
+.composer textarea {
+  background: transparent;
+  caret-color: var(--accent);
+}
+.composer:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 2px 12px var(--soft-shadow);
+}
+.sidebar .search {
+  margin: 18px 0 0;
+  padding: 0 8px;
+  border-radius: 7px;
+}
+.sidebar .search:focus-within {
+  background: var(--selected);
+  color: var(--accent);
+}
+.sidebar .search input {
+  min-width: 0;
+  color: var(--foreground);
+  caret-color: var(--accent);
+}
+
+.permission-settings {
+  border-bottom: 1px solid var(--border);
+}
+.permission-heading {
+  width: 100%;
+  padding: 20px 0;
+  justify-content: space-between;
+  text-align: left;
+}
+.permission-heading strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.permission-heading span {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.permission-heading svg {
+  color: var(--muted);
+}
+.permission-heading .expanded {
+  transform: rotate(180deg);
+}
+.permission-list {
+  padding: 0 0 8px;
+}
+.permission-item {
+  border: 0;
+  padding: 10px 0 14px;
+  margin: 0;
+  min-width: 0;
+}
+.permission-item legend {
+  font-size: 12px;
+  padding: 0;
+}
+.permission-choices {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 3px;
+  gap: 3px;
+  background: var(--surface);
+  border-radius: 7px;
+}
+.permission-choice {
+  position: relative;
+  min-width: 0;
+}
+.permission-choice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+.permission-choice span {
+  display: block;
+  padding: 9px 3px;
+  border-radius: 5px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.permission-choice input:checked + span {
+  background: var(--selected);
+  color: var(--foreground);
+  font-weight: 600;
+}
+.permission-choice input:focus-visible {
+  outline: 0;
+}
+.permission-choice input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.permission-choice input:disabled + span {
+  opacity: 0.5;
+}
+.permission-choice input:disabled {
+  cursor: default;
+}
+.permission-note {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 7px 0 0;
+}
+
+.app .welcome {
+  align-items: flex-start;
+}
+.welcome .welcome-inner {
+  margin-block: auto;
+  padding-bottom: 0;
+  flex-shrink: 0;
+}
+
+.profile-menu-anchor {
+  position: relative;
+}
+.profile-trigger {
+  width: 100%;
+  margin: 0;
+  padding: 10px 8px;
+  border: 0;
+  text-align: left;
+  color: var(--foreground);
+}
+.profile-trigger .avatar {
+  flex-shrink: 0;
+}
+.profile-trigger strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.profile-chevron {
+  color: var(--muted);
+}
+.profile-trigger[aria-expanded='true'] {
+  background: var(--selected);
+}
+.profile-trigger[aria-expanded='true'] .profile-chevron {
+  transform: rotate(180deg);
+}
+.profile-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  padding: 5px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 5px 22px var(--shadow);
+  z-index: 30;
+}
+.profile-menu button {
+  width: 100%;
+  padding: 11px 10px;
+  justify-content: flex-start;
+  font-size: 12px;
+}
+.profile-menu svg {
+  color: var(--muted);
+}
+.app .composer-footer > span:only-child {
+  display: flex;
+}
+
 .auth-screen {
   flex: 1;
   display: grid;
@@ -188,4 +375,34 @@
   height: 100dvh;
   border-radius: 0;
   box-shadow: none;
+}
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 8px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: var(--selected);
+  font-size: 12px;
+}
+.composer-attachment > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-attachment > svg,
+.composer-attachment > button {
+  flex-shrink: 0;
+}
+.composer-file-status,
+.composer-file-error {
+  margin: 6px 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.composer-file-error {
+  color: var(--danger);
 }
