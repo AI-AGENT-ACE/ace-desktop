@@ -17,6 +17,54 @@ html[data-motion-ready] dialog::backdrop {
   transition: background-color var(--theme-transition-duration) var(--motion-easing);
 }
 
+/* Keep the sidebar mounted so width and position can interpolate in both directions. */
+.sidebar-panel,
+html[data-motion-ready] .sidebar-panel {
+  --sidebar-width: 260px;
+  width: var(--sidebar-width);
+  min-width: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 250ms var(--motion-easing);
+}
+.sidebar-panel > .sidebar,
+html[data-motion-ready] .sidebar-panel > .sidebar {
+  width: var(--sidebar-width);
+  height: 100%;
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 250ms var(--motion-easing),
+    opacity 200ms var(--motion-easing),
+    visibility 0s,
+    background-color var(--theme-transition-duration) var(--motion-easing),
+    color var(--theme-transition-duration) var(--motion-easing);
+}
+.sidebar-panel.is-collapsed,
+html[data-motion-ready] .sidebar-panel.is-collapsed {
+  width: 0;
+}
+.sidebar-panel.is-collapsed > .sidebar,
+html[data-motion-ready] .sidebar-panel.is-collapsed > .sidebar {
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 0s, 0s, 250ms, 0s, 0s;
+}
+@media (max-width: 900px) {
+  .sidebar-panel,
+  html[data-motion-ready] .sidebar-panel {
+    --sidebar-width: 240px;
+  }
+}
+@media (max-width: 680px) {
+  .sidebar-panel,
+  html[data-motion-ready] .sidebar-panel {
+    --sidebar-width: 210px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --theme-transition-duration: 0ms;

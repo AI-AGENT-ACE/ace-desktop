@@ -3,6 +3,7 @@ import { settingsApi } from '../../api/settings.api';
 import { apiErrorMessage, isCancelled } from '../../api/client';
 import { Modal } from '../../components/Modal';
 import type { AgentSettings, Permission, PermissionPolicy } from '../../types';
+import { PermissionSettings } from './PermissionSettings';
 export function SettingsModal({
   theme,
   wake,
@@ -64,6 +65,33 @@ export function SettingsModal({
     void update(async () => {
       const saved = await settingsApi.update(next);
       if (mounted.current) setSettings(saved);
+    });
+  const savePermission = (permission: Permission, policy: PermissionPolicy) =>
+    void update(async () => {
+      setPermissions((previous) =>
+        previous.map((item) =>
+          item.toolName === permission.toolName
+            ? {
+                ...item,
+                policy,
+                requiresConfirmation: item.systemConfirmation || policy !== 'ALWAYS_ALLOW',
+              }
+            : item,
+        ),
+      );
+      try {
+        const saved = await settingsApi.permission(permission.toolName, policy);
+        if (mounted.current)
+          setPermissions((previous) =>
+            previous.map((item) => (item.toolName === saved.toolName ? saved : item)),
+          );
+      } catch (cause) {
+        if (mounted.current)
+          setPermissions((previous) =>
+            previous.map((item) => (item.toolName === permission.toolName ? permission : item)),
+          );
+        throw cause;
+      }
     });
   return (
     <Modal title="설정" onClose={onClose}>
@@ -143,37 +171,7 @@ export function SettingsModal({
           </div>
         </>
       )}
-      {permissions.map((permission) => (
-        <div className="setting-row" key={permission.toolName}>
-          <div>
-            <strong>{permission.toolName}</strong>
-            <p>
-              {permission.systemConfirmation
-                ? '시스템 정책에 따라 실행 전 승인이 필요합니다.'
-                : '도구 실행 정책'}
-            </p>
-          </div>
-          <select
-            aria-label={`${permission.toolName} 권한`}
-            value={permission.policy}
-            disabled={busy}
-            onChange={(event) => {
-              const policy = event.target.value as PermissionPolicy;
-              void update(async () => {
-                const saved = await settingsApi.permission(permission.toolName, policy);
-                if (mounted.current)
-                  setPermissions((previous) =>
-                    previous.map((item) => (item.toolName === saved.toolName ? saved : item)),
-                  );
-              });
-            }}
-          >
-            <option value="ALWAYS_ALLOW">항상 허용</option>
-            <option value="ASK">확인</option>
-            <option value="ALWAYS_ASK">항상 확인</option>
-          </select>
-        </div>
-      ))}
+      <PermissionSettings permissions={permissions} busy={busy} onChange={savePermission} />
       <div className="setting-row">
         <div>
           <strong>삭제된 대화</strong>

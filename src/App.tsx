@@ -3,13 +3,11 @@ import {
   ArrowUpRight,
   AudioLines,
   Check,
-  Circle,
+  CloudSun,
   CircleAlert,
   LoaderCircle,
-  MessageSquare,
-  Moon,
   PanelLeftOpen,
-  Sun,
+  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import { isTauri, invoke } from '@tauri-apps/api/core';
@@ -51,8 +49,22 @@ type PendingAction = { request?: SystemActionRequest; call?: ToolCall; voice: bo
 function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const conversations = useConversations();
   const [active, setActive] = useState<string | null>(null);
+  const [draftVersion, setDraftVersion] = useState(0);
   const messages = useMessages(active);
   const [collapsed, setCollapsed] = useState(false);
+  const sidebarPanel = useRef<HTMLDivElement>(null);
+  const expandSidebar = useRef<HTMLButtonElement>(null);
+  const previousCollapsed = useRef(false);
+  useEffect(() => {
+    if (previousCollapsed.current !== collapsed) {
+      if (collapsed) expandSidebar.current?.focus();
+      else
+        sidebarPanel.current
+          ?.querySelector<HTMLButtonElement>('[aria-label="사이드바 접기"]')
+          ?.focus();
+      previousCollapsed.current = collapsed;
+    }
+  }, [collapsed]);
   const [modal, setModal] = useState<'settings' | 'trash' | null>(null);
   const [rename, setRename] = useState<Conversation | null>(null);
   const [name, setName] = useState('');
@@ -155,22 +167,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       if (mounted.current) setMutating(false);
     }
   };
-  const create = async () => {
-    if (mutationLock.current) return;
-    mutationLock.current = true;
-    setMutating(true);
-    try {
-      const conversation = await conversationApi.create();
-      if (mounted.current) {
-        conversations.upsert(conversation);
-        setActive(conversation.id);
-      }
-    } catch (cause) {
-      setNotice(apiErrorMessage(cause));
-    } finally {
-      mutationLock.current = false;
-      if (mounted.current) setMutating(false);
-    }
+  const startNewChat = () => {
+    if (busy) return;
+    setActive(null);
+    setDraftVersion((version) => version + 1);
+    setNotice('');
   };
   const reconcile = async (id: string) => {
     const page = await messagesApi.list(id);
@@ -365,7 +366,12 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     <div className="app">
       <CustomTitleBar onNotice={setNotice} />
       <div className="main">
-        {!collapsed && (
+        <div
+          ref={sidebarPanel}
+          className={`sidebar-panel${collapsed ? ' is-collapsed' : ''}`}
+          inert={collapsed}
+          aria-hidden={collapsed}
+        >
           <Sidebar
             query={conversations}
             profile={user.displayName || user.email}
@@ -373,7 +379,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             onSelect={(id) => {
               if (!busy) setActive(id);
             }}
-            onNew={() => void create()}
+            onNew={startNewChat}
             onSettings={() => setModal('settings')}
             onTrash={() => setModal('trash')}
             onCollapse={() => setCollapsed(true)}
@@ -384,7 +390,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             onUpdate={(conversation, type) => void update(conversation, type)}
             busy={busy}
           />
-        )}
+        </div>
         <main className="chat-layout">
           <header className="chat-header">
             {collapsed && (
@@ -392,36 +398,16 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 <button
                   className="icon-button"
                   aria-label="사이드바 펼치기"
+                  ref={expandSidebar}
                   onClick={() => setCollapsed(false)}
                 >
                   <PanelLeftOpen size={19} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="새 채팅"
-                  disabled={busy}
-                  onClick={() => void create()}
-                >
-                  <MessageSquare size={18} />
                 </button>
               </>
             )}
             <span>
               ACE <span className="header-subtitle">Personal assistant</span>
             </span>
-            <div className="header-right">
-              <span className="demo-label">
-                <Circle size={6} />
-                {aiReady ? 'AI 연결 설정됨' : '메시지 저장 모드'}
-              </span>
-              <button
-                className="icon-button"
-                aria-label={theme === 'light' ? '다크 테마 적용' : '라이트 테마 적용'}
-                onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-              >
-                {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
-              </button>
-            </div>
           </header>
           {active ? (
             <MessageList key={`messages-${active}`} query={messages} sending={sending} />
@@ -441,24 +427,25 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 <div className="suggestions">
                   {[
                     {
-                      icon: MessageSquare,
-                      label: '함께 생각하기',
-                      text: '새로운 프로젝트 아이디어를 정리해 줘',
-                      sub: '생각을 조금 더 구체적으로',
+                      icon: CloudSun,
+                      label: '오늘 날씨 알아보기',
+                      onClick: () => void send('오늘 날씨 알려줘'),
+                      sub: '오늘의 날씨를 물어보세요',
                     },
                     {
-                      icon: Check,
-                      label: '대화 시작하기',
-                      text: '오늘 할 일을 정리해 보자',
-                      sub: '대화를 안전하게 저장',
+                      icon: SlidersHorizontal,
+                      label: '환경 설정하기',
+                      onClick: () => setModal('settings'),
+                      sub: 'ACE를 나에게 맞게 설정',
                     },
-                    { icon: AudioLines, label: '목소리로 말하기', text: '', sub: '음성 명령 입력' },
+                    {
+                      icon: AudioLines,
+                      label: '목소리로 말하기',
+                      onClick: () => void openVoice(),
+                      sub: '음성 명령 입력',
+                    },
                   ].map((item) => (
-                    <button
-                      key={item.label}
-                      disabled={busy}
-                      onClick={() => (item.text ? void send(item.text) : void openVoice())}
-                    >
+                    <button key={item.label} disabled={busy} onClick={item.onClick}>
                       <item.icon size={20} />
                       <strong>{item.label}</strong>
                       <span>{item.sub}</span>
@@ -466,7 +453,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
                     </button>
                   ))}
                 </div>
-                <p className="welcome-note">당신의 다음 아이디어는, 한 문장이면 충분해요.</p>
               </div>
             </div>
           )}
@@ -492,7 +478,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             </div>
           )}
           <ChatComposer
-            key={`composer-${active || 'welcome'}`}
+            key={`composer-${active || `draft-${draftVersion}`}`}
             onSend={send}
             onVoice={() => void openVoice()}
             busy={busy || (!!active && messages.isLoading)}
