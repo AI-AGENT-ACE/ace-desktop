@@ -15,7 +15,7 @@ import { listen } from '@tauri-apps/api/event';
 import { CustomTitleBar } from './layouts/CustomTitleBar';
 import { Sidebar } from './layouts/Sidebar';
 import { Modal } from './components/Modal';
-import { ChatComposer } from './features/chat/ChatComposer';
+import { ChatComposer, type UploadProgress } from './features/chat/ChatComposer';
 import { MessageList } from './features/chat/MessageList';
 import { TrashModal } from './features/trash/TrashModal';
 import { VoiceOverlay } from './features/voice/VoiceOverlay';
@@ -28,6 +28,7 @@ import {
 } from './features/system-actions/adapters/systemAdapter';
 import { conversationApi } from './api/conversations.api';
 import { messagesApi } from './api/messages.api';
+import { attachmentsApi } from './api/attachments.api';
 import { agentApi } from './api/agent.api';
 import { recordVoiceLog } from './api/voice.api';
 import { apiErrorMessage, isCancelled } from './api/client';
@@ -194,22 +195,43 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     if (mounted.current && id === active) page.items.slice().reverse().forEach(messages.append);
     return page.items;
   };
-  const send = async (text: string): Promise<boolean> => {
+  const send = async (
+    text: string,
+    files: File[] = [],
+    onProgress: (progress: UploadProgress) => void = () => undefined,
+  ): Promise<boolean> => {
     if (lock.current) return false;
     lock.current = true;
     setSending(true);
     let id = active;
     const known = new Set(messages.items.map((message) => message.id));
+    const uploaded: string[] = [];
     try {
       if (!id) {
         const conversation = await conversationApi.create();
         id = conversation.id;
         conversations.upsert(conversation);
       }
+      for (let index = 0; index < files.length; index += 1) {
+        onProgress({ index, status: 'uploading', progress: 0 });
+        try {
+          const attachment = await attachmentsApi.upload(id, files[index], (progress) =>
+            onProgress({ index, status: 'uploading', progress }),
+          );
+          uploaded.push(attachment.id);
+          onProgress({ index, status: 'uploaded', progress: 100 });
+        } catch (cause) {
+          onProgress({ index, status: 'failed', progress: 0, error: apiErrorMessage(cause) });
+          await Promise.allSettled(
+            uploaded.map((attachmentId) => attachmentsApi.remove(attachmentId)),
+          );
+          throw cause;
+        }
+      }
       const configured = aiReady ?? (await agentApi.health()).ai === 'configured';
       setAiReady(configured);
       if (configured) {
-        const turn = await agentApi.turn(id, text);
+        const turn = await agentApi.turn(id, text, uploaded);
         await reconcile(id);
         if (mounted.current)
           setPending((previous) => [
@@ -217,7 +239,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             ...turn.toolCalls.map((call) => ({ call, voice: false })),
           ]);
       } else {
-        const saved = await messagesApi.create(id, text);
+        const saved = await messagesApi.create(id, text, uploaded);
         if (id === active) messages.append(saved);
         setNotice('메시지를 저장했습니다. AI 응답은 AI 서버 연결 후 사용할 수 있습니다.');
       }
@@ -248,6 +270,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           /* Keep the original send error and the draft. */
         }
       }
+      await Promise.allSettled(uploaded.map((attachmentId) => attachmentsApi.remove(attachmentId)));
       return false;
     } finally {
       lock.current = false;

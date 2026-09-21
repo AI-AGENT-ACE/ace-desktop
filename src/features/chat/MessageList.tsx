@@ -1,8 +1,9 @@
 import { useLayoutEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowDown, LoaderCircle } from 'lucide-react';
+import { ArrowDown, Download, FileAudio, FileText, Image, LoaderCircle } from 'lucide-react';
 import type { useMessages } from '../../hooks/useMessages';
+import { attachmentsApi } from '../../api/attachments.api';
 export function MessageList({
   query,
   sending,
@@ -94,6 +95,28 @@ export function MessageList({
                     <p>{message.content}</p>
                   )}
                 </div>
+                {!!message.attachments?.length && (
+                  <div className="message-attachments">
+                    {message.attachments.map((attachment) => (
+                      <button
+                        key={attachment.id}
+                        onClick={() => void attachmentsApi.download(attachment)}
+                        title={`${attachment.originalName} 다운로드`}
+                      >
+                        {attachment.mimeType.startsWith('image/') ? (
+                          <Image size={17} />
+                        ) : attachment.mimeType.startsWith('audio/') ? (
+                          <FileAudio size={17} />
+                        ) : (
+                          <FileText size={17} />
+                        )}
+                        <span>{attachment.originalName}</span>
+                        <small>{Math.max(1, Math.ceil(attachment.size / 1024))}KB</small>
+                        <Download size={15} />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </article>
             ))}
             {sending && (

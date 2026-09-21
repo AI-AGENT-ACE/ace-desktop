@@ -35,6 +35,14 @@ export interface Message {
   role: 'USER' | 'ASSISTANT' | 'TOOL' | 'SYSTEM';
   content: string;
   createdAt: string;
+  attachments: Attachment[];
+}
+export interface Attachment {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
 }
 export interface Page<T> {
   items: T[];

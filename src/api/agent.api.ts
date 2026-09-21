@@ -1,11 +1,11 @@
 import { apiClient } from './client';
 import type { AgentTurn, ToolCall } from '../types';
 export const agentApi = {
-  async turn(conversationId: string, content: string) {
+  async turn(conversationId: string, content: string, attachmentIds: string[] = []) {
     return (
       await apiClient.post<AgentTurn>(
         '/agent/turns',
-        { conversationId, content },
+        { conversationId, content, attachmentIds },
         { timeout: 30000 },
       )
     ).data;

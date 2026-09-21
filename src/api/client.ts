@@ -88,6 +88,12 @@ const messages: Record<string, string> = {
   RATE_LIMITED: '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
   UNAUTHENTICATED: '로그인이 만료되었습니다. 다시 로그인해 주세요.',
   DATABASE_UNAVAILABLE: '데이터베이스에 연결하지 못했습니다.',
+  UNSUPPORTED_FILE_TYPE: '지원하지 않는 파일 형식입니다.',
+  FILE_TOO_LARGE: '파일 크기 제한을 초과했습니다.',
+  INVALID_FILE_SIGNATURE: '파일 내용과 확장자가 일치하지 않습니다.',
+  FILE_UPLOAD_FAILED: '파일을 업로드하지 못했습니다.',
+  FILE_DELETE_FAILED: '파일을 삭제하지 못했습니다.',
+  ATTACHMENT_NOT_FOUND: '첨부 파일을 찾을 수 없습니다.',
 };
 export function apiErrorMessage(error: unknown): string {
   if (axios.isAxiosError<ApiErrorResponse>(error)) {
