@@ -16,6 +16,15 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
         invoke: async (command: string, args?: { handler?: number }) => {
           state.calls.push(command);
           if (command === 'plugin:event|listen') return args?.handler ?? 0;
+          if (command === 'stop_voice_recording') {
+            return {
+              path: 'C:\\ACE\\recordings\\test.wav',
+              sampleRate: 48000,
+              channels: 1,
+              samplesWritten: 4096,
+              durationMs: 85,
+            };
+          }
           return undefined;
         },
       },
@@ -30,6 +39,23 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
         },
       },
     });
+    class AudioContextMock {
+      sampleRate = 48000;
+      destination = {};
+      createMediaStreamSource() {
+        return { connect: () => {}, disconnect: () => {} };
+      }
+      createScriptProcessor() {
+        return { onaudioprocess: null, connect: () => {}, disconnect: () => {} };
+      }
+      createGain() {
+        return { gain: { value: 1 }, connect: () => {}, disconnect: () => {} };
+      }
+      close() {
+        return Promise.resolve();
+      }
+    }
+    Object.assign(window, { AudioContext: AudioContextMock });
   });
   await page.goto('/#voice');
   await expect(page.getByRole('complementary', { name: '음성 명령 입력' })).toBeVisible();
@@ -63,5 +89,7 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
       ).trayVoiceTest.state,
   );
   expect(result.stopped).toBe(1);
+  expect(result.calls).toContain('start_voice_recording');
+  expect(result.calls).toContain('stop_voice_recording');
   expect(result.calls).toContain('hide_voice_overlay');
 });

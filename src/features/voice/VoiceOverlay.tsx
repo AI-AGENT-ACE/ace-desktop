@@ -6,12 +6,18 @@ export function VoiceOverlay({
   onTranscript,
   onFinish,
   onClose,
+  recording,
+  recordingPath,
+  onStopRecording,
 }: {
   state: VoiceState;
   transcript: string;
   onTranscript: (text: string) => void;
   onFinish: () => void;
   onClose: () => void;
+  recording?: boolean;
+  recordingPath?: string;
+  onStopRecording?: () => void;
 }) {
   return (
     <aside className="voice-overlay" aria-label="음성 명령 입력" aria-live="polite">
@@ -35,9 +41,22 @@ export function VoiceOverlay({
         </button>
       </div>
       <p>
-        STT는 아직 연결되지 않았습니다. ‘시스템 상태 조회’, ‘메모장 실행’ 등의 명령을 입력하세요.
-        원문은 대화에 저장하지 않습니다.
+        STT는 아직 연결되지 않았습니다. 마이크 음성은 로컬 WAV 파일로 저장할 수 있으며, 명령 문장은
+        직접 입력해야 합니다.
       </p>
+      {onStopRecording && (
+        <div className="voice-recording-status">
+          <span>
+            {recording ? '마이크 녹음 중' : recordingPath ? 'WAV 저장 완료' : '녹음 준비 중'}
+          </span>
+          {recording && (
+            <button type="button" onClick={onStopRecording} disabled={state === 'processing'}>
+              녹음 종료 · WAV 저장
+            </button>
+          )}
+          {recordingPath && <small title={recordingPath}>{recordingPath}</small>}
+        </div>
+      )}
       <input
         aria-label="음성 명령 문장"
         maxLength={200}

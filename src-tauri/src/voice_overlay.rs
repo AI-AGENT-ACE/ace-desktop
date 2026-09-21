@@ -9,7 +9,7 @@ pub struct VoiceRuntime {
 pub fn create(app: &tauri::App) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, "voice", WebviewUrl::App("index.html#voice".into()))
         .title("ACE 음성 명령")
-        .inner_size(380.0, 280.0)
+        .inner_size(380.0, 350.0)
         .resizable(false)
         .decorations(false)
         .always_on_top(true)
@@ -62,6 +62,9 @@ pub fn activate(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn shutdown(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Err(error) = crate::voice_recording::finish_active(app) {
+        eprintln!("ACE voice recording finalization failed: {error}");
+    }
     app.state::<VoiceRuntime>()
         .active
         .store(false, Ordering::Release);

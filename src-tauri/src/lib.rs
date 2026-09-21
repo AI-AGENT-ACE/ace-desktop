@@ -5,6 +5,7 @@ mod local_commands;
 mod taskbar;
 mod tray;
 mod voice_overlay;
+mod voice_recording;
 #[tauri::command]
 fn hide_ace(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -26,6 +27,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(tray::TrayState::default())
         .manage(voice_overlay::VoiceRuntime::default())
+        .manage(voice_recording::VoiceRecordingState::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             voice_overlay::create(app)?;
@@ -69,6 +71,10 @@ pub fn run() {
             voice_overlay::activate_voice_orb,
             voice_overlay::hide_voice_overlay,
             voice_overlay::submit_voice_command,
+            voice_recording::start_voice_recording,
+            voice_recording::append_voice_recording_samples,
+            voice_recording::stop_voice_recording,
+            voice_recording::cancel_voice_recording,
             tray::set_wake_word_enabled,
             tray::take_pending_settings_request
         ])
