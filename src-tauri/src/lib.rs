@@ -30,6 +30,7 @@ pub fn run() {
         .manage(voice_recording::VoiceRecordingState::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            app.manage(local_commands::initialize(app.handle()));
             voice_overlay::create(app)?;
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
@@ -68,6 +69,7 @@ pub fn run() {
             greet,
             hide_ace,
             local_commands::execute_local_command,
+            local_commands::list_installed_apps,
             voice_overlay::activate_voice_orb,
             voice_overlay::hide_voice_overlay,
             voice_overlay::submit_voice_command,

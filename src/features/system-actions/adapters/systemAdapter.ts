@@ -12,7 +12,17 @@ const policies: Record<string, IpcRiskLevel> = {
   'file.open': 'BLOCKED',
   'file.rename': 'BLOCKED',
   'file.delete': 'BLOCKED',
+  'shell.exec': 'BLOCKED',
   unsupported: 'BLOCKED',
+};
+const blockedAppAliases = /^(cmd|명령 프롬프트|powershell|파워쉘|pwsh|wscript|cscript|mshta)$/i;
+const nativeErrors: Record<string, string> = {
+  APP_NOT_FOUND: '설치된 앱 목록에서 요청한 앱을 찾지 못했습니다.',
+  AMBIGUOUS_APP: '같은 별칭을 사용하는 앱이 여러 개입니다.',
+  STALE_APP_PATH: '앱 경로가 바뀌었습니다. ACE를 다시 시작해 주세요.',
+  DUPLICATE_REQUEST: '동일한 실행 요청이 이미 처리 중입니다.',
+  ELEVATION_REQUIRED: '관리자 권한이 필요한 앱은 자동 실행할 수 없습니다.',
+  EXECUTION_FAILED: '앱 실행 요청을 완료하지 못했습니다.',
 };
 export function localPolicy(commandType: string): IpcRiskLevel {
   return policies[commandType] || 'BLOCKED';
@@ -34,13 +44,21 @@ export function classifyVoiceCommand(text: string): SystemActionRequest {
       label: '시스템 상태 조회',
       riskLevel: 'SAFE',
     };
-  const match = /^(메모장|계산기)\s*(열어줘|실행|켜줘|종료|닫아줘)$/.exec(text);
+  const match = /^(.{1,80}?)\s*(열어줘|실행|켜줘|종료|닫아줘)$/.exec(text.trim());
   if (match) {
+    const target = match[1].trim();
+    if (blockedAppAliases.test(target))
+      return {
+        commandType: 'unsupported',
+        arguments: {},
+        label: 'Shell 실행 차단',
+        riskLevel: 'BLOCKED',
+      };
     const commandType = /종료|닫아줘/.test(match[2]) ? 'app.close' : 'app.open';
     return {
       commandType,
-      arguments: { appName: match[1] === '메모장' ? 'Notepad' : 'Calculator' },
-      label: `${match[1]} ${commandType === 'app.open' ? '실행' : '종료'}`,
+      arguments: { appName: target },
+      label: `${target} ${commandType === 'app.open' ? '실행' : '종료'}`,
       riskLevel: 'CONFIRM',
     };
   }
@@ -63,10 +81,13 @@ export const systemAdapter = {
         errorCode: 'DESKTOP_REQUIRED',
         message: '로컬 명령은 Tauri 데스크톱 앱에서 실행할 수 있습니다.',
       };
-    return invoke<SystemActionResult>('execute_local_command', {
+    const result = await invoke<SystemActionResult>('execute_local_command', {
       commandType: request.commandType,
       arguments: request.arguments,
       confirmed,
     });
+    if (!result.success && result.errorCode && !result.message)
+      return { ...result, message: nativeErrors[result.errorCode] };
+    return result;
   },
 };

@@ -94,6 +94,11 @@ const messages: Record<string, string> = {
   FILE_UPLOAD_FAILED: '파일을 업로드하지 못했습니다.',
   FILE_DELETE_FAILED: '파일을 삭제하지 못했습니다.',
   ATTACHMENT_NOT_FOUND: '첨부 파일을 찾을 수 없습니다.',
+  APP_NOT_FOUND: '설치된 앱 목록에서 요청한 앱을 찾을 수 없습니다.',
+  AMBIGUOUS_APP: '같은 별칭을 사용하는 앱이 여러 개입니다.',
+  STALE_APP_PATH: '앱 실행 경로가 변경되었습니다. ACE를 다시 시작해 주세요.',
+  DUPLICATE_REQUEST: '동일한 앱 실행 요청이 이미 처리 중입니다.',
+  ELEVATION_REQUIRED: '관리자 권한이 필요한 앱은 ACE에서 자동 실행할 수 없습니다.',
 };
 export function apiErrorMessage(error: unknown): string {
   if (axios.isAxiosError<ApiErrorResponse>(error)) {
