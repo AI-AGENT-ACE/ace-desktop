@@ -9,7 +9,10 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
-use crate::voice_overlay;
+use crate::{
+    voice_overlay,
+    wake_word::{self, WakeWordState, WakeWordStatus},
+};
 
 const OPEN_MAIN: &str = "open_main";
 const VOICE_COMMAND: &str = "voice_command";
@@ -43,7 +46,6 @@ impl TrayAction {
 }
 
 pub struct TrayState {
-    wake_word_enabled: AtomicBool,
     open_settings_pending: AtomicBool,
     wake_word_item: Mutex<Option<MenuItem<tauri::Wry>>>,
 }
@@ -51,7 +53,6 @@ pub struct TrayState {
 impl Default for TrayState {
     fn default() -> Self {
         Self {
-            wake_word_enabled: AtomicBool::new(true),
             open_settings_pending: AtomicBool::new(false),
             wake_word_item: Mutex::new(None),
         }
@@ -59,29 +60,32 @@ impl Default for TrayState {
 }
 
 impl TrayState {
-    fn wake_word_enabled(&self) -> bool {
-        self.wake_word_enabled.load(Ordering::Acquire)
-    }
-
-    fn set_wake_word(&self, enabled: bool) -> Result<(), String> {
-        self.wake_word_enabled.store(enabled, Ordering::Release);
+    fn set_wake_word_label(&self, status: &WakeWordStatus) -> Result<(), String> {
         let item = self
             .wake_word_item
             .lock()
             .map_err(|_| "Tray wake word state is unavailable".to_owned())?;
         if let Some(item) = item.as_ref() {
-            item.set_text(wake_word_text(enabled))
+            item.set_text(wake_word_text(status))
                 .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
 }
 
-fn wake_word_text(enabled: bool) -> &'static str {
-    if enabled {
-        "Wake Word: 켜짐"
-    } else {
-        "Wake Word: 꺼짐"
+fn wake_word_text(status: &WakeWordStatus) -> &'static str {
+    match status.state {
+        WakeWordState::Disabled => "Wake Word: 꺼짐",
+        WakeWordState::Starting => "Wake Word: 시작 중",
+        WakeWordState::Listening => "Wake Word: 듣는 중",
+        WakeWordState::Triggered => "Wake Word: 감지됨",
+        WakeWordState::Error => "Wake Word: 오류",
+    }
+}
+
+pub fn sync_wake_word_item(app: &AppHandle, status: &WakeWordStatus) {
+    if let Err(error) = app.state::<TrayState>().set_wake_word_label(status) {
+        eprintln!("ACE tray wake word label update failed: {error}");
     }
 }
 
@@ -106,11 +110,8 @@ fn hide_main(app: &AppHandle) -> Result<(), String> {
 }
 
 fn toggle_wake_word(app: &AppHandle) -> Result<(), String> {
-    let state = app.state::<TrayState>();
-    let enabled = !state.wake_word_enabled();
-    state.set_wake_word(enabled)?;
-    app.emit_to("main", "ace-wake-word-changed", enabled)
-        .map_err(|error| error.to_string())
+    let enabled = !app.state::<wake_word::WakeWordRuntime>().status().enabled;
+    wake_word::set_enabled(app, enabled).map(|_| ())
 }
 
 fn open_settings(app: &AppHandle) -> Result<(), String> {
@@ -126,6 +127,7 @@ fn quit(app: &AppHandle) {
     if let Err(error) = voice_overlay::shutdown(app) {
         report(TrayAction::Quit, error);
     }
+    wake_word::stop(app);
     app.exit(0);
 }
 
@@ -154,7 +156,7 @@ pub fn create(app: &tauri::App) -> tauri::Result<()> {
     let wake = MenuItem::with_id(
         app,
         TOGGLE_WAKE_WORD,
-        wake_word_text(app.state::<TrayState>().wake_word_enabled()),
+        wake_word_text(&app.state::<wake_word::WakeWordRuntime>().status()),
         true,
         None::<&str>,
     )?;
@@ -213,7 +215,7 @@ pub fn set_wake_word_enabled(
     if window.label() != "main" {
         return Err("BLOCKED".into());
     }
-    app.state::<TrayState>().set_wake_word(enabled)
+    wake_word::set_enabled(&app, enabled).map(|_| ())
 }
 
 #[tauri::command]
@@ -249,7 +251,18 @@ mod tests {
 
     #[test]
     fn wake_word_labels_reflect_runtime_state() {
-        assert_eq!(wake_word_text(true), "Wake Word: 켜짐");
-        assert_eq!(wake_word_text(false), "Wake Word: 꺼짐");
+        let status = |state, enabled| WakeWordStatus {
+            state,
+            enabled,
+            error: None,
+        };
+        assert_eq!(
+            wake_word_text(&status(WakeWordState::Listening, true)),
+            "Wake Word: 듣는 중"
+        );
+        assert_eq!(
+            wake_word_text(&status(WakeWordState::Disabled, false)),
+            "Wake Word: 꺼짐"
+        );
     }
 }

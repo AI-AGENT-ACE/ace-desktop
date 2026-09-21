@@ -138,6 +138,13 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     void register<boolean>('ace-wake-word-changed', (enabled) => {
       if (typeof enabled === 'boolean') setWake(enabled);
     });
+    void register<{ state: string; enabled: boolean; error?: string }>(
+      'ace-wake-word-status',
+      (status) => {
+        setWake(status.enabled);
+        if (status.state === 'error' && status.error) setNotice(status.error);
+      },
+    );
     void register('ace-open-settings', () => {
       setModal('settings');
       void invoke('take_pending_settings_request');

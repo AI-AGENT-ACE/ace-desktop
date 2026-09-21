@@ -6,6 +6,10 @@ pub struct VoiceRuntime {
     active: AtomicBool,
 }
 
+pub fn is_active(app: &tauri::AppHandle) -> bool {
+    app.state::<VoiceRuntime>().active.load(Ordering::Acquire)
+}
+
 pub fn create(app: &tauri::App) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, "voice", WebviewUrl::App("index.html#voice".into()))
         .title("ACE 음성 명령")
@@ -62,8 +66,8 @@ pub fn activate(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 pub fn shutdown(app: &tauri::AppHandle) -> Result<(), String> {
-    if let Err(error) = crate::voice_recording::finish_active(app) {
-        eprintln!("ACE voice recording finalization failed: {error}");
+    if let Err(error) = crate::voice_recording::cancel_active(app) {
+        eprintln!("ACE temporary voice recording cleanup failed: {error}");
     }
     app.state::<VoiceRuntime>()
         .active

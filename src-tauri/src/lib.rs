@@ -6,6 +6,7 @@ mod taskbar;
 mod tray;
 mod voice_overlay;
 mod voice_recording;
+mod wake_word;
 #[tauri::command]
 fn hide_ace(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -24,10 +25,11 @@ fn greet(name: &str) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(tray::TrayState::default())
         .manage(voice_overlay::VoiceRuntime::default())
         .manage(voice_recording::VoiceRecordingState::default())
+        .manage(wake_word::WakeWordRuntime::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(local_commands::initialize(app.handle()));
@@ -78,8 +80,20 @@ pub fn run() {
             voice_recording::stop_voice_recording,
             voice_recording::cancel_voice_recording,
             tray::set_wake_word_enabled,
+            wake_word::get_wake_word_status,
             tray::take_pending_settings_request
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+    app.run(|app, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            wake_word::stop(app);
+            if let Err(error) = voice_recording::cancel_active(app) {
+                eprintln!("ACE recording exit cleanup failed: {error}");
+            }
+        }
+    });
 }
