@@ -125,17 +125,33 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
-    let stop: (() => void) | undefined;
-    listen<string>('ace-voice-command', (event) => {
-      if (!disposed && typeof event.payload === 'string' && event.payload.length <= 200)
-        void runVoice(event.payload.trim());
-    }).then((unlisten) => {
+    const stops: (() => void)[] = [];
+    const register = async <T,>(event: string, callback: (payload: T) => void) => {
+      const unlisten = await listen<T>(event, ({ payload }) => callback(payload));
       if (disposed) unlisten();
-      else stop = unlisten;
+      else stops.push(unlisten);
+    };
+    void register<string>('ace-voice-command', (payload) => {
+      if (typeof payload === 'string' && payload.length <= 200) void runVoice(payload.trim());
     });
+    void register<boolean>('ace-wake-word-changed', (enabled) => {
+      if (typeof enabled === 'boolean') setWake(enabled);
+    });
+    void register('ace-open-settings', () => {
+      setModal('settings');
+      void invoke('take_pending_settings_request');
+    });
+    void invoke('set_wake_word_enabled', { enabled: wake }).catch((cause) =>
+      setNotice(apiErrorMessage(cause)),
+    );
+    void invoke<boolean>('take_pending_settings_request')
+      .then((pending) => {
+        if (!disposed && pending) setModal('settings');
+      })
+      .catch((cause) => setNotice(apiErrorMessage(cause)));
     return () => {
       disposed = true;
-      stop?.();
+      stops.forEach((stop) => stop());
       void invoke('hide_voice_overlay');
     };
   }, []);
@@ -355,11 +371,23 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const openVoice = async () => {
     if (isTauri()) {
       try {
-        await invoke('show_voice_overlay');
+        await invoke('activate_voice_orb');
       } catch (cause) {
         setNotice(apiErrorMessage(cause));
       }
     } else setVoice('listening');
+  };
+  const changeWake = async (enabled: boolean) => {
+    if (!isTauri()) {
+      setWake(enabled);
+      return;
+    }
+    try {
+      await invoke('set_wake_word_enabled', { enabled });
+      setWake(enabled);
+    } catch (cause) {
+      setNotice(apiErrorMessage(cause));
+    }
   };
   const busy = mutating || sending || !!current || action?.status === 'pending';
   return (
@@ -506,7 +534,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           theme={theme}
           wake={wake}
           onTheme={setTheme}
-          onWake={setWake}
+          onWake={(enabled) => void changeWake(enabled)}
           onTrash={() => setModal('trash')}
           onClose={() => setModal(null)}
           onLogout={() => void logout()}
