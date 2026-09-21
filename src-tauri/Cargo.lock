@@ -12,6 +12,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "windows",
+ "windows-collections",
 ]
 
 [[package]]

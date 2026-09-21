@@ -62,6 +62,6 @@ export function ChatComposer({ onSend, onVoice, busy, wake }: {
       <div className="composer-tools"><div className="tool-anchor"><button className="icon-button" aria-label="추가 기능" aria-expanded={menu} disabled={busy} onClick={() => setMenu(!menu)}><Plus size={21} /></button>{menu && <div className="tool-menu"><button onClick={() => { setMenu(false); fileInput.current?.click(); }}><Paperclip size={16} />파일 추가</button><p className="composer-file-status"><Image size={13} /> 이미지 · 문서 · 오디오 · 텍스트</p></div>}</div>
         <span className="composer-hint">Shift + Enter로 줄바꿈</span><button className="icon-button" aria-label="음성 입력" onClick={onVoice} disabled={busy}><Mic size={19} /></button><button className="send-button" aria-label="메시지 보내기" disabled={(!text.trim() && !files.length) || busy} onClick={() => void send()}><ArrowUp size={21} /></button>
       </div>
-    </div><footer className="composer-footer"><span><i className={wake ? 'status-dot' : 'status-dot off'} />{wake ? 'Wake Word 설정 켜짐 · 감지 미연결' : 'Wake Word 꺼짐'}</span></footer></div></div>
+    </div><footer className="composer-footer"><span><i className={wake ? 'status-dot' : 'status-dot off'} />{wake ? 'Wake Word 듣는 중 · “ACE”라고 불러보세요' : 'Wake Word 꺼짐'}</span></footer></div></div>
   );
 }

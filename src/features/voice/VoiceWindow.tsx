@@ -56,6 +56,15 @@ export function VoiceWindow() {
     return result;
   };
 
+  const cancelTemporary = async () => {
+    releaseAudio();
+    await writeQueue.current;
+    if (!recordingActive.current) return;
+    recordingActive.current = false;
+    setRecording(false);
+    await invoke('cancel_voice_recording');
+  };
+
   const startMicrophone = async () => {
     releaseAudio();
     const generation = microphoneGeneration.current;
@@ -151,7 +160,7 @@ export function VoiceWindow() {
     try {
       const transient = text.trim();
       setText('');
-      await stopAndSave();
+      await cancelTemporary();
       await invoke('submit_voice_command', { text: transient });
     } catch (cause) {
       setError(apiErrorMessage(cause));
@@ -164,7 +173,7 @@ export function VoiceWindow() {
     setBusy(true);
     setError('');
     try {
-      await stopAndSave();
+      await cancelTemporary();
       setText('');
       await invoke('hide_voice_overlay');
     } catch (cause) {

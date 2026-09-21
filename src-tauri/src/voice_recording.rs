@@ -19,7 +19,8 @@ pub struct VoiceRecordingState {
 
 struct WavRecording {
     writer: BufWriter<File>,
-    path: PathBuf,
+    temporary_path: PathBuf,
+    saved_path: PathBuf,
     sample_rate: u32,
     channels: u16,
     samples_written: u64,
@@ -36,14 +37,17 @@ pub struct VoiceRecordingResult {
 }
 
 impl WavRecording {
-    fn create(path: PathBuf, sample_rate: u32, channels: u16) -> Result<Self, String> {
-        let mut writer = BufWriter::new(File::create(&path).map_err(|error| error.to_string())?);
+    fn create(saved_path: PathBuf, sample_rate: u32, channels: u16) -> Result<Self, String> {
+        let temporary_path = saved_path.with_extension("wav.part");
+        let mut writer =
+            BufWriter::new(File::create(&temporary_path).map_err(|error| error.to_string())?);
         writer
             .write_all(&wav_header(sample_rate, channels, 0))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             writer,
-            path,
+            temporary_path,
+            saved_path,
             sample_rate,
             channels,
             samples_written: 0,
@@ -79,10 +83,12 @@ impl WavRecording {
             .write_all(&wav_header(self.sample_rate, self.channels, data_size))
             .map_err(|error| error.to_string())?;
         self.writer.flush().map_err(|error| error.to_string())?;
+        drop(self.writer);
+        fs::rename(&self.temporary_path, &self.saved_path).map_err(|error| error.to_string())?;
 
         let frames = self.samples_written / self.channels as u64;
         Ok(VoiceRecordingResult {
-            path: self.path.to_string_lossy().into_owned(),
+            path: self.saved_path.to_string_lossy().into_owned(),
             sample_rate: self.sample_rate,
             channels: self.channels,
             samples_written: self.samples_written,
@@ -137,6 +143,22 @@ fn recording_path(directory: &Path) -> PathBuf {
     directory.join(format!("ace-recording-{timestamp}-overflow.wav"))
 }
 
+fn cleanup_incomplete_recordings(directory: &Path) -> Result<(), String> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "part")
+        {
+            let _ = fs::remove_file(path);
+        }
+    }
+    Ok(())
+}
+
 fn require_voice_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     if window.label() == "voice" {
         Ok(())
@@ -158,6 +180,7 @@ pub fn start_voice_recording(
     }
     let directory = recordings_dir(&app)?;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    cleanup_incomplete_recordings(&directory)?;
     let state = app.state::<VoiceRecordingState>();
     let mut active = state
         .recording
@@ -178,10 +201,7 @@ pub fn append_voice_recording_samples(
     samples: Vec<f32>,
 ) -> Result<(), String> {
     require_voice_window(&window)?;
-    if samples.is_empty()
-        || samples.len() > MAX_CHUNK_SAMPLES
-        || samples.iter().any(|v| !v.is_finite())
-    {
+    if !valid_sample_chunk(&samples) {
         return Err("잘못된 음성 샘플입니다.".into());
     }
     let state = app.state::<VoiceRecordingState>();
@@ -193,6 +213,12 @@ pub fn append_voice_recording_samples(
         .as_mut()
         .ok_or_else(|| "진행 중인 녹음이 없습니다.".to_owned())?
         .append(&samples)
+}
+
+fn valid_sample_chunk(samples: &[f32]) -> bool {
+    !samples.is_empty()
+        && samples.len() <= MAX_CHUNK_SAMPLES
+        && samples.iter().all(|value| value.is_finite())
 }
 
 #[tauri::command]
@@ -218,7 +244,7 @@ pub fn cancel_voice_recording(
         .take();
     if let Some(recording) = recording {
         drop(recording.writer);
-        fs::remove_file(recording.path).map_err(|error| error.to_string())?;
+        fs::remove_file(recording.temporary_path).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -233,6 +259,22 @@ pub fn finish_active<R: Runtime>(
         .map_err(|_| "녹음 상태를 잠글 수 없습니다.".to_owned())?
         .take();
     recording.map(WavRecording::finish).transpose()
+}
+
+pub fn cancel_active<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let recording = app
+        .state::<VoiceRecordingState>()
+        .recording
+        .lock()
+        .map_err(|_| "녹음 상태를 잠글 수 없습니다.".to_owned())?
+        .take();
+    if let Some(recording) = recording {
+        drop(recording.writer);
+        if recording.temporary_path.exists() {
+            fs::remove_file(recording.temporary_path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -260,5 +302,47 @@ mod tests {
         assert_eq!(bytes.len(), 50);
         assert_eq!(result.samples_written, 3);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn canceled_recording_removes_temporary_file() {
+        let path = std::env::temp_dir().join(format!(
+            "ace-cancel-test-{}.wav",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let recording = WavRecording::create(path.clone(), 16_000, 1).unwrap();
+        let temporary = recording.temporary_path.clone();
+        assert!(temporary.exists());
+        drop(recording.writer);
+        fs::remove_file(&temporary).unwrap();
+        assert!(!temporary.exists());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn rejects_recording_beyond_thirty_minutes() {
+        let path = std::env::temp_dir().join(format!(
+            "ace-limit-test-{}.wav",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut recording = WavRecording::create(path, 8_000, 1).unwrap();
+        recording.samples_written = 8_000 * MAX_RECORDING_SECONDS;
+        assert!(recording.append(&[0.0]).is_err());
+        drop(recording.writer);
+        fs::remove_file(recording.temporary_path).unwrap();
+    }
+
+    #[test]
+    fn malformed_samples_are_identified() {
+        assert!(!valid_sample_chunk(&[]));
+        assert!(!valid_sample_chunk(&[f32::NAN]));
+        assert!(!valid_sample_chunk(&[f32::INFINITY]));
+        assert!(valid_sample_chunk(&[-1.0, 0.0, 1.0]));
     }
 }
