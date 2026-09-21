@@ -5,20 +5,23 @@ test('테마는 300ms 동안 중간 색상을 거쳐 변경되고 설정에서�
   await login(page);
   await expect(page.locator('html')).toHaveAttribute('data-motion-ready', 'true');
   await expect(page.locator('body')).toHaveCSS('transition-duration', '0.3s');
-  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(242, 243, 239)');
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(245, 245, 245)');
   await openProfileItem(page, '설정');
   const middle = await page.evaluate(async () => {
     const select = document.querySelector('[aria-label="화면 테마"]') as HTMLSelectElement;
     select.value = 'dark';
     select.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 150));
     return getComputedStyle(document.querySelector('.sidebar')!).backgroundColor;
   });
-  expect(middle).not.toBe('rgb(242, 243, 239)');
-  expect(middle).not.toBe('rgb(25, 28, 24)');
-  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(25, 28, 24)');
+  expect(middle).not.toBe('rgb(245, 245, 245)');
+  expect(middle).not.toBe('rgb(25, 25, 25)');
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(25, 25, 25)');
+  await page.getByRole('button', { name: '닫기', exact: true }).click();
+  await page.screenshot({ path: 'artifacts/main-dark-monochrome.png' });
+  await openProfileItem(page, '설정');
   await page.getByRole('combobox', { name: '화면 테마' }).selectOption('light');
-  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(242, 243, 239)');
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(245, 245, 245)');
 });
 
 test('저장된 테마로 시작하고 reduced motion은 전환을 제거', async ({ page }) => {
@@ -30,7 +33,7 @@ test('저장된 테마로 시작하고 reduced motion은 전환을 제거', asyn
   await expect(page.locator('body')).toHaveCSS('transition-duration', '0s');
   await openProfileItem(page, '설정');
   await page.getByRole('combobox', { name: '화면 테마' }).selectOption('light');
-  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(242, 243, 239)');
+  await expect(page.locator('.sidebar')).toHaveCSS('background-color', 'rgb(245, 245, 245)');
   await page.getByRole('button', { name: '닫기', exact: true }).click();
   await page.getByRole('button', { name: '사이드바 접기' }).click();
   await expect(page.locator('.sidebar-panel')).toHaveCSS('width', '0px');

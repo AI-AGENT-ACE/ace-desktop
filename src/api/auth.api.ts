@@ -10,7 +10,7 @@ export const authApi = {
     return (
       await apiClient.post<AuthResponse>(
         '/auth/register',
-        { email, password, ...(displayName.trim() ? { displayName: displayName.trim() } : {}) },
+        { email, password, displayName: displayName.trim() },
         { skipAuth: true },
       )
     ).data;

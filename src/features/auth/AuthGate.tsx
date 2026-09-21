@@ -11,6 +11,8 @@ export function AuthGate({
 }) {
   const auth = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [registeredEmail, setRegisteredEmail] = useState('');
+  const [success, setSuccess] = useState('');
   const [notice, setNotice] = useState('');
   if (auth.state.status === 'authenticated') return children(auth.state.user, auth.logout);
   return (
@@ -25,12 +27,23 @@ export function AuthGate({
         <AuthForm
           key={mode}
           mode={mode}
+          initialEmail={mode === 'login' ? registeredEmail : ''}
+          success={success}
           error={auth.error}
           busy={auth.busy}
-          onSubmit={auth.authenticate}
+          onSubmit={async (submittedMode, input) => {
+            const result = await auth.authenticate(submittedMode, input);
+            if (result === 'registered') {
+              setRegisteredEmail(input.email.trim());
+              setSuccess('회원가입이 완료되었습니다. 가입한 계정으로 로그인해 주세요.');
+              setMode('login');
+            }
+            return result;
+          }}
           onSwitch={() => {
             setMode(mode === 'login' ? 'signup' : 'login');
             auth.clearError();
+            setSuccess('');
             setNotice('');
           }}
         />
