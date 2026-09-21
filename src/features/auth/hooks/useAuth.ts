@@ -12,7 +12,9 @@ export interface AuthInput {
   email: string;
   password: string;
   displayName: string;
+  rememberMe: boolean;
 }
+export type AuthResult = 'registered' | 'authenticated' | 'failed';
 function authErrorMessage(cause: unknown) {
   if (!axios.isAxiosError(cause)) return '인증을 완료하지 못했습니다. 다시 시도해 주세요.';
   if (!cause.response) return '서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.';
@@ -56,20 +58,37 @@ export function useAuth() {
     };
   }, []);
   const authenticate = async (mode: 'login' | 'signup', input: AuthInput) => {
-    if (lock.current) return;
+    if (lock.current) return 'failed' as const;
     lock.current = true;
     setBusy(true);
     setError('');
     try {
-      const response =
-        mode === 'signup'
-          ? await authApi.register(input.email.trim(), input.password, input.displayName)
-          : await authApi.login(input.email.trim(), input.password);
+      if (mode === 'signup') {
+        const response = await authApi.register(
+          input.email.trim(),
+          input.password,
+          input.displayName,
+        );
+        const { user: _user, ...tokens } = response;
+        setSession(tokens, false);
+        try {
+          await authApi.logout();
+        } catch {
+          // 가입 성공 자체는 유지하고, 발급받은 임시 토큰은 로컬에서 폐기한다.
+        } finally {
+          setSession(null);
+        }
+        setState({ status: 'unauthenticated', user: null });
+        return 'registered' as const;
+      }
+      const response = await authApi.login(input.email.trim(), input.password);
       const { user, ...tokens } = response;
-      setSession(tokens);
+      setSession(tokens, input.rememberMe);
       setState({ status: 'authenticated', user });
+      return 'authenticated' as const;
     } catch (cause) {
       setError(authErrorMessage(cause));
+      return 'failed' as const;
     } finally {
       lock.current = false;
       setBusy(false);
