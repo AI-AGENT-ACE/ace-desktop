@@ -34,7 +34,8 @@ JavaScript 의존성은 `package-lock.json`, Rust 의존성은 `src-tauri/Cargo.
 ## 실행 환경
 
 - Node.js **22.12 이상**과 npm
-- Windows 데스크톱 기준으로 검증한 프로젝트
+- Windows 10/11 x64 공식 지원
+- macOS와 Linux는 현재 미지원·미검증
 - Tauri 실행 시 Rust stable, Microsoft C++ Build Tools의 데스크톱 C++ 개발 도구, WebView2 필요
 - 실제 기능 사용 시 실행 중인 ACE Backend와 PostgreSQL 필요
 - 브라우저에서는 화면·API를 사용할 수 있으며 창 제어·PC 명령은 Tauri 앱에서 사용
@@ -188,9 +189,11 @@ cargo test --offline
 - [창 전환·트레이](docs/UI_TRANSITIONS.md)
 - [작업표시줄·트레이 아이콘](docs/APP_ICONS.md)
 - [트레이 메뉴·음성 진입·Wake Word 상태](docs/TRAY_FEATURES.md)
+- [Windows Release와 플랫폼 정책](docs/RELEASE_AND_PLATFORM.md)
+- [Wake Word·음성 녹음 정책](docs/WAKE_WORD_AND_VOICE_RECORDING.md)
 
 `.env`, node_modules, 빌드 결과, Rust target, 테스트 출력과 개인 키는 Git에서 제외합니다. `.env.example`과 lock 파일은 포함합니다.
 
 ## 라이선스
 
-현재 저장소에는 별도 라이선스가 선언되어 있지 않습니다. 재사용·배포 범위는 프로젝트 소유자에게 확인해 주세요.
+현재 저장소에는 별도 라이선스가 선언되어 있지 않습니다. 프로젝트 소유자가 방향을 결정하기 전에는 LICENSE를 임의 생성하지 않습니다.

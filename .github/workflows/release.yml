@@ -1,0 +1,68 @@
+name: Desktop Windows Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vMAJOR.MINOR.PATCH tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_URL }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag }}' } else { '${{ github.ref_name }}' }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw 'Release tag must use vMAJOR.MINOR.PATCH.' }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+      - name: Validate production API and version
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VITE_API_BASE_URL)) { throw 'Repository variable PRODUCTION_API_URL is required.' }
+          $uri = [Uri]$env:VITE_API_BASE_URL
+          if ($uri.Scheme -ne 'https') { throw 'PRODUCTION_API_URL must use HTTPS.' }
+          $expected = '${{ steps.release.outputs.tag }}'.TrimStart('v')
+          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($tauri.version -ne $expected -or $package.version -ne $expected) { throw "Tag, Tauri and npm versions must match: $expected" }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run build
+      - name: Build NSIS installer
+        run: npm run tauri build -- --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ACE-Windows-${{ steps.release.outputs.tag }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: src-tauri/target/release/bundle/nsis/*.exe
