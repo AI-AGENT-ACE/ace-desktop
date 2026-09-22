@@ -1,6 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::Manager;
 mod local_commands;
+mod native_tools;
+mod native_windows;
 #[cfg(windows)]
 mod taskbar;
 mod tray;
@@ -72,6 +74,7 @@ pub fn run() {
             hide_ace,
             local_commands::execute_local_command,
             local_commands::list_installed_apps,
+            native_tools::execute_native_tool,
             voice_overlay::activate_voice_orb,
             voice_overlay::hide_voice_overlay,
             voice_overlay::submit_voice_command,

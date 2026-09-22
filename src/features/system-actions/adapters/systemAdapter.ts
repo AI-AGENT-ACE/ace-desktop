@@ -7,11 +7,32 @@ import type {
 } from '../../../types';
 const policies: Record<string, IpcRiskLevel> = {
   'system.status': 'SAFE',
-  'app.open': 'CONFIRM',
+  'app.open': 'SAFE',
   'app.close': 'CONFIRM',
-  'file.open': 'BLOCKED',
-  'file.rename': 'BLOCKED',
-  'file.delete': 'BLOCKED',
+  'app.focus': 'SAFE',
+  'app.minimize': 'SAFE',
+  'app.maximize': 'SAFE',
+  'file.search': 'SAFE',
+  'file.open': 'SAFE',
+  'file.rename': 'CONFIRM',
+  'file.move': 'CONFIRM',
+  'file.copy': 'CONFIRM',
+  'file.delete': 'CONFIRM',
+  'folder.open': 'SAFE',
+  'folder.search': 'SAFE',
+  'folder.create': 'CONFIRM',
+  'web.open': 'SAFE',
+  'web.search': 'SAFE',
+  'clipboard.write': 'SAFE',
+  'clipboard.read': 'CONFIRM',
+  'voice.activate': 'SAFE',
+  'screen.capture': 'SAFE',
+  'system.volume.set': 'SAFE',
+  'system.volume.mute': 'SAFE',
+  'system.open_settings': 'SAFE',
+  'system.lock': 'CONFIRM',
+  'system.shutdown': 'BLOCKED',
+  'system.restart': 'BLOCKED',
   'shell.exec': 'BLOCKED',
   unsupported: 'BLOCKED',
 };
@@ -23,7 +44,24 @@ const nativeErrors: Record<string, string> = {
   DUPLICATE_REQUEST: '동일한 실행 요청이 이미 처리 중입니다.',
   ELEVATION_REQUIRED: '관리자 권한이 필요한 앱은 자동 실행할 수 없습니다.',
   EXECUTION_FAILED: '앱 실행 요청을 완료하지 못했습니다.',
+  APP_LAUNCH_FAILED: '앱을 실행하지 못했습니다.',
+  WINDOW_NOT_FOUND: '실행 중인 앱 창을 찾지 못했습니다.',
+  FILE_NOT_FOUND: '파일을 찾지 못했습니다.',
+  DIRECTORY_NOT_FOUND: '폴더를 찾지 못했습니다.',
+  INVALID_ARGUMENT: '요청 인자가 올바르지 않습니다.',
+  PATH_NOT_ALLOWED: '허용된 사용자 폴더 밖에는 접근할 수 없습니다.',
+  DESTINATION_EXISTS: '대상 위치에 같은 이름이 이미 있습니다.',
+  PERMISSION_DENIED: '운영체제 권한이 거부되었습니다.',
+  CLIPBOARD_DENIED: '클립보드에 접근할 수 없습니다.',
+  SCREEN_CAPTURE_FAILED: '화면을 캡처하지 못했습니다.',
+  BLOCKED_BY_POLICY: 'ACE 보안 정책으로 차단된 기능입니다.',
 };
+interface NativeToolResult {
+  success: boolean;
+  tool: string;
+  data: Record<string, unknown> | null;
+  error: { code: string; message: string } | null;
+}
 export function localPolicy(commandType: string): IpcRiskLevel {
   return policies[commandType] || 'BLOCKED';
 }
@@ -59,7 +97,7 @@ export function classifyVoiceCommand(text: string): SystemActionRequest {
       commandType,
       arguments: { appName: target },
       label: `${target} ${commandType === 'app.open' ? '실행' : '종료'}`,
-      riskLevel: 'CONFIRM',
+      riskLevel: localPolicy(commandType),
     };
   }
   return {
@@ -81,13 +119,18 @@ export const systemAdapter = {
         errorCode: 'DESKTOP_REQUIRED',
         message: '로컬 명령은 Tauri 데스크톱 앱에서 실행할 수 있습니다.',
       };
-    const result = await invoke<SystemActionResult>('execute_local_command', {
-      commandType: request.commandType,
+    const native = await invoke<NativeToolResult>('execute_native_tool', {
+      tool: request.commandType,
       arguments: request.arguments,
       confirmed,
     });
-    if (!result.success && result.errorCode && !result.message)
-      return { ...result, message: nativeErrors[result.errorCode] };
-    return result;
+    if (!native.success) {
+      const errorCode = native.error?.code || 'EXECUTION_FAILED';
+      return { success: false, errorCode, message: native.error?.message || nativeErrors[errorCode] };
+    }
+    return {
+      success: true,
+      message: native.data?.message as string | undefined,
+    };
   },
 };

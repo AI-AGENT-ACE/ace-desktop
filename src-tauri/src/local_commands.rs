@@ -35,11 +35,11 @@ impl Risk {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct InstalledApp {
-    name: String,
+pub(crate) struct InstalledApp {
+    pub(crate) name: String,
     aliases: Vec<String>,
-    executable_path: PathBuf,
-    process_name: String,
+    pub(crate) executable_path: PathBuf,
+    pub(crate) process_name: String,
     app_type: String,
     last_verified: u64,
 }
@@ -55,7 +55,7 @@ pub struct InstalledAppSummary {
 
 #[derive(Default)]
 pub struct NativeExecutionState {
-    registry: Mutex<Vec<InstalledApp>>,
+    pub(crate) registry: Mutex<Vec<InstalledApp>>,
     recent_requests: Mutex<HashMap<String, Instant>>,
 }
 
@@ -336,7 +336,10 @@ pub fn initialize(app: &tauri::AppHandle) -> NativeExecutionState {
     }
 }
 
-fn resolve_app(registry: &[InstalledApp], alias: &str) -> Result<InstalledApp, &'static str> {
+pub(crate) fn resolve_app(
+    registry: &[InstalledApp],
+    alias: &str,
+) -> Result<InstalledApp, &'static str> {
     let requested = normalize_alias(alias);
     if requested.is_empty() || requested.len() > 80 {
         return Err("INVALID_ARGUMENTS");
@@ -558,7 +561,7 @@ fn logged_result(
 }
 
 #[cfg(windows)]
-fn execute_app(command: &str, target: &InstalledApp) -> ExecutionResult {
+pub(crate) fn execute_app(command: &str, target: &InstalledApp) -> ExecutionResult {
     use std::os::windows::process::CommandExt;
     let output = if command == "app.open" {
         Command::new(&target.executable_path).spawn().map(|_| ())
