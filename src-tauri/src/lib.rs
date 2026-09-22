@@ -32,6 +32,7 @@ pub fn run() {
         .manage(voice_overlay::VoiceRuntime::default())
         .manage(voice_recording::VoiceRecordingState::default())
         .manage(wake_word::WakeWordRuntime::default())
+        .manage(native_tools::NativeToolState::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(local_commands::initialize(app.handle()));

@@ -74,6 +74,7 @@ export type VoiceState = 'idle' | 'listening' | 'processing' | 'error';
 export type SystemActionStatus = 'pending' | 'success' | 'error';
 export type IpcRiskLevel = 'SAFE' | 'CONFIRM' | 'BLOCKED';
 export interface SystemActionRequest {
+  contractVersion?: '1.1';
   commandType: string;
   arguments: Record<string, unknown>;
   riskLevel: IpcRiskLevel;
@@ -90,7 +91,18 @@ export interface VoiceLogInput {
   duration: number;
   errorCode?: string;
 }
+export interface NativeEntityReference {
+  canonicalId?: string;
+  original: string;
+  candidates: string[];
+}
+export interface NativeSearchQueryReference {
+  original: string;
+  candidates: string[];
+}
 export interface ToolCall {
+  version?: '1.1';
+  type?: 'tool_call';
   id: string;
   tool: string;
   arguments: Record<string, unknown>;
