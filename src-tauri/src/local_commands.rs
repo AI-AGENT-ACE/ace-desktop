@@ -37,11 +37,11 @@ impl Risk {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InstalledApp {
     pub(crate) name: String,
-    aliases: Vec<String>,
+    pub(crate) aliases: Vec<String>,
     pub(crate) executable_path: PathBuf,
     pub(crate) process_name: String,
-    app_type: String,
-    last_verified: u64,
+    pub(crate) app_type: String,
+    pub(crate) last_verified: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,7 +155,7 @@ fn allowed_roots() -> Vec<PathBuf> {
     Vec::new()
 }
 
-fn verified_executable(path: &Path) -> Option<PathBuf> {
+pub(crate) fn verified_executable(path: &Path) -> Option<PathBuf> {
     if !path.is_absolute()
         || !path.is_file()
         || path

@@ -55,6 +55,12 @@ const nativeErrors: Record<string, string> = {
   CLIPBOARD_DENIED: '클립보드에 접근할 수 없습니다.',
   SCREEN_CAPTURE_FAILED: '화면을 캡처하지 못했습니다.',
   BLOCKED_BY_POLICY: 'ACE 보안 정책으로 차단된 기능입니다.',
+  AMBIGUOUS_APP_MATCH: '여러 앱이 비슷하게 일치합니다. 실행할 앱을 다시 지정해 주세요.',
+  AMBIGUOUS_FILE_MATCH: '여러 파일이 일치합니다. 검색 결과에서 대상을 선택해 주세요.',
+  NO_MATCH_FOUND: '일치하는 대상을 찾지 못했습니다.',
+  INVALID_CANDIDATES: '대상 후보 정보가 올바르지 않습니다.',
+  RESOURCE_EXPIRED: '검색 결과의 사용 시간이 만료되었습니다. 다시 검색해 주세요.',
+  RESOURCE_NOT_FOUND: '검색 결과를 찾지 못했습니다. 다시 검색해 주세요.',
 };
 interface NativeToolResult {
   success: boolean;
@@ -67,6 +73,7 @@ export function localPolicy(commandType: string): IpcRiskLevel {
 }
 export function toolRequest(call: ToolCall): SystemActionRequest {
   return {
+    contractVersion: call.version || '1.1',
     commandType: call.tool,
     arguments: call.arguments,
     label: call.tool,
@@ -95,7 +102,7 @@ export function classifyVoiceCommand(text: string): SystemActionRequest {
     const commandType = /종료|닫아줘/.test(match[2]) ? 'app.close' : 'app.open';
     return {
       commandType,
-      arguments: { appName: target },
+      arguments: { original: target, candidates: [target] },
       label: `${target} ${commandType === 'app.open' ? '실행' : '종료'}`,
       riskLevel: localPolicy(commandType),
     };
@@ -120,6 +127,7 @@ export const systemAdapter = {
         message: '로컬 명령은 Tauri 데스크톱 앱에서 실행할 수 있습니다.',
       };
     const native = await invoke<NativeToolResult>('execute_native_tool', {
+      version: request.contractVersion || '1.1',
       tool: request.commandType,
       arguments: request.arguments,
       confirmed,

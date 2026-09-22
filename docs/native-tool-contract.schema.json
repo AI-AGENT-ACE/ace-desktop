@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ace.local/schemas/native-tool-contract-1.1.json",
+  "title": "ACE Native Tool Contract",
+  "type": "object",
+  "required": ["version", "type", "tool", "arguments"],
+  "properties": {
+    "version": { "const": "1.1" },
+    "type": { "const": "tool_call" },
+    "tool": {
+      "enum": [
+        "app.open", "app.close", "app.focus", "app.minimize", "app.maximize",
+        "file.search", "file.open", "file.rename", "file.move", "file.copy", "file.delete",
+        "folder.open", "folder.search", "folder.create", "web.open", "web.search",
+        "clipboard.write", "clipboard.read", "voice.activate", "screen.capture",
+        "system.volume.set", "system.volume.mute", "system.open_settings", "system.lock"
+      ]
+    },
+    "arguments": { "type": "object" }
+  },
+  "$defs": {
+    "entityReference": {
+      "type": "object",
+      "required": ["original", "candidates"],
+      "additionalProperties": false,
+      "properties": {
+        "canonicalId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "original": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "candidates": {
+          "type": "array", "maxItems": 5, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        }
+      }
+    },
+    "searchQueryReference": {
+      "type": "object",
+      "required": ["original", "candidates"],
+      "additionalProperties": false,
+      "properties": {
+        "original": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "candidates": {
+          "type": "array", "maxItems": 5, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        }
+      }
+    },
+    "resourceReference": {
+      "type": "object",
+      "required": ["resourceId"],
+      "additionalProperties": false,
+      "properties": { "resourceId": { "type": "string", "minLength": 1, "maxLength": 100 } }
+    },
+    "fileSearchArguments": {
+      "type": "object",
+      "required": ["directory", "query"],
+      "additionalProperties": false,
+      "properties": {
+        "directory": { "$ref": "#/$defs/entityReference" },
+        "query": { "$ref": "#/$defs/searchQueryReference" },
+        "extensions": { "type": "array", "maxItems": 10, "items": { "type": "string", "pattern": "^[A-Za-z0-9]{1,10}$" } },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "tool": { "pattern": "^app\\." } } },
+      "then": { "properties": { "arguments": { "$ref": "#/$defs/entityReference" } } }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "file.search" } } },
+      "then": { "properties": { "arguments": { "$ref": "#/$defs/fileSearchArguments" } } }
+    },
+    {
+      "if": { "properties": { "tool": { "enum": ["file.open", "file.delete"] } } },
+      "then": { "properties": { "arguments": { "allOf": [{ "$ref": "#/$defs/resourceReference" }] } } }
+    },
+    {
+      "if": { "properties": { "tool": { "const": "file.rename" } } },
+      "then": {
+        "properties": {
+          "arguments": {
+            "type": "object", "required": ["resourceId", "newName"], "additionalProperties": false,
+            "properties": {
+              "resourceId": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "newName": { "type": "string", "minLength": 1, "maxLength": 255 }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}
