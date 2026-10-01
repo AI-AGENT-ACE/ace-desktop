@@ -27,8 +27,9 @@ export const settingsApi = {
       return {
         toolName: tool.name,
         policy,
+        denied: policy === 'DENY',
         systemConfirmation: tool.systemConfirmation,
-        requiresConfirmation: tool.systemConfirmation || policy !== 'ALWAYS_ALLOW',
+        requiresConfirmation: policy !== 'DENY' && (tool.systemConfirmation || policy === 'ASK'),
       };
     });
   },
