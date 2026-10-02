@@ -601,6 +601,8 @@ fn log(
     }
 }
 
+// Tauri injects four runtime parameters; keep the established IPC contract.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn execute_native_tool(
     app: tauri::AppHandle,
