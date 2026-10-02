@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { settingsApi } from '../../api/settings.api';
 import { apiErrorMessage, isCancelled } from '../../api/client';
 import { Modal } from '../../components/Modal';
@@ -179,7 +180,7 @@ export function SettingsModal({
           <strong>삭제된 대화</strong>
           <p>30일 동안 대화를 복구할 수 있어요.</p>
         </div>
-        <button onClick={onTrash}>휴지통 열기</button>
+        <button className="settings-navigation" onClick={onTrash}><Trash2 size={15} />휴지통 보기</button>
       </div>
       <div className="modal-actions">
         <button onClick={onLogout}>로그아웃</button>

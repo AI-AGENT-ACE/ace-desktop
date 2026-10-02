@@ -2,9 +2,18 @@ import { test, expect } from '@playwright/test';
 
 test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한다', async ({ page }) => {
   await page.addInitScript(() => {
+    localStorage.setItem(
+      'ace-auth-session',
+      JSON.stringify({ accessToken: 'test-access-token', refreshToken: 'test-refresh-token' }),
+    );
     let callbackId = 0;
     const callbacks = new Map<number, (event: unknown) => void>();
-    const state = { requested: 0, stopped: 0, calls: [] as string[] };
+    const state = {
+      requested: 0,
+      stopped: 0,
+      calls: [] as string[],
+      processor: null as null | { onaudioprocess: null | ((event: unknown) => void) },
+    };
     Object.assign(window, {
       trayVoiceTest: { state, callbacks },
       __TAURI_INTERNALS__: {
@@ -18,13 +27,20 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
           if (command === 'plugin:event|listen') return args?.handler ?? 0;
           if (command === 'stop_voice_recording') {
             return {
-              path: 'C:\\ACE\\recordings\\test.wav',
+              recordingId: 'voice_test',
+              state: 'READY',
               sampleRate: 48000,
               channels: 1,
-              samplesWritten: 4096,
-              durationMs: 85,
+              samplesWritten: 48000,
+              durationMs: 1000,
             };
           }
+          if (command === 'upload_voice_recording')
+            return {
+              recordingId: 'voice_test',
+              state: 'SUCCESS',
+              result: { transcript: '테스트' },
+            };
           return undefined;
         },
       },
@@ -46,7 +62,13 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
         return { connect: () => {}, disconnect: () => {} };
       }
       createScriptProcessor() {
-        return { onaudioprocess: null, connect: () => {}, disconnect: () => {} };
+        const processor = {
+          onaudioprocess: null as null | ((event: unknown) => void),
+          connect: () => {},
+          disconnect: () => {},
+        };
+        state.processor = processor;
+        return processor;
       }
       createGain() {
         return { gain: { value: 1 }, connect: () => {}, disconnect: () => {} };
@@ -58,7 +80,7 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
     Object.assign(window, { AudioContext: AudioContextMock });
   });
   await page.goto('/#voice');
-  await expect(page.getByRole('complementary', { name: '음성 명령 입력' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'ACE 음성 명령' })).toBeVisible();
   await page.evaluate(() => {
     const testState = (
       window as unknown as {
@@ -79,7 +101,20 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
       ),
     )
     .toBe(1);
-  await page.getByRole('button', { name: '음성 입력 닫기' }).click();
+  await page.evaluate(() => {
+    const state = (
+      window as unknown as {
+        trayVoiceTest: {
+          state: { processor: { onaudioprocess: null | ((event: unknown) => void) } };
+        };
+      }
+    ).trayVoiceTest.state;
+    state.processor.onaudioprocess?.({
+      inputBuffer: { getChannelData: () => new Float32Array(4096).fill(0.1) },
+    });
+  });
+  await page.getByRole('button', { name: /ACE Orb, 클릭하여 녹음 종료/ }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { trayVoiceTest: { state: { calls: string[] } } }).trayVoiceTest.state.calls.includes('upload_voice_recording'))).toBe(true);
   const result = await page.evaluate(
     () =>
       (
@@ -91,5 +126,11 @@ test('Orb 활성화는 마이크를 시작하고 닫을 때 트랙을 정리한�
   expect(result.stopped).toBe(1);
   expect(result.calls).toContain('start_voice_recording');
   expect(result.calls).toContain('stop_voice_recording');
-  expect(result.calls).toContain('hide_voice_overlay');
+  expect(result.calls).toContain('upload_voice_recording');
+  expect(result.calls.indexOf('append_voice_recording_samples')).toBeLessThan(
+    result.calls.indexOf('stop_voice_recording'),
+  );
+  expect(result.calls.indexOf('stop_voice_recording')).toBeLessThan(
+    result.calls.indexOf('upload_voice_recording'),
+  );
 });

@@ -305,7 +305,6 @@ p {
   gap: 9px;
   padding: 19px 7px 0;
   margin-top: 8px;
-  border-top: 1px solid var(--border);
 }
 .avatar {
   width: 31px;
@@ -632,27 +631,8 @@ p {
   opacity: 1;
 }
 .composer-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  min-height: 11px;
   margin-top: 13px;
-  font-size: 9px;
-  color: var(--muted);
-}
-.composer-footer span:first-child {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.status-dot {
-  width: 5px;
-  height: 5px;
-  display: inline-block;
-  background: var(--success);
-  border-radius: 50%;
-}
-.status-dot.off {
-  background: var(--muted);
 }
 .system-action {
   width: min(calc(100% - 64px), 820px);
@@ -879,132 +859,4 @@ p {
 .voice-overlay > button {
   width: 100%;
 }
-.toast {
-  position: fixed;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  background: var(--foreground);
-  color: var(--background);
-  padding: 12px 17px;
-  border-radius: 8px;
-  box-shadow: 0 3px 15px var(--shadow);
-  z-index: 40;
-  font-size: 12px;
-  max-width: calc(100% - 40px);
-}
-.toast button {
-  color: inherit;
-}
-.skeletons > div {
-  height: 29px;
-  margin: 8px;
-  background: var(--selected);
-  border-radius: 5px;
-  animation: pulse 1.5s infinite;
-}
-.spin {
-  animation: spin 1.2s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes pulse {
-  50% {
-    opacity: 0.4;
-  }
-}
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 5px;
-}
-@media (max-width: 900px) {
-  .sidebar {
-    width: 240px;
-  }
-  .suggestions {
-    gap: 8px;
-  }
-  .suggestions button {
-    padding: 15px 11px;
-  }
-  .suggestions span {
-    font-size: 9px;
-  }
-  .composer-footer > span:last-child {
-    display: none;
-  }
-  .header-subtitle {
-    display: none;
-  }
-}
-@media (max-width: 680px) {
-  .sidebar {
-    width: 210px;
-    padding: 0 10px;
-  }
-  .chat-header {
-    padding: 0 16px;
-  }
-  .chat-content,
-  .system-action {
-    width: calc(100% - 32px);
-  }
-  .welcome {
-    padding: 15px;
-  }
-  .suggestions {
-    grid-template-columns: 1fr;
-    margin-top: 25px;
-  }
-  .suggestions button {
-    padding: 13px 15px;
-    gap: 4px;
-  }
-  .suggestions button > svg:first-child {
-    display: none;
-  }
-  .welcome-inner {
-    padding-bottom: 0;
-  }
-  .welcome-mark,
-  .eyebrow,
-  .welcome-note {
-    display: none;
-  }
-  .welcome h1 {
-    font-size: 23px;
-  }
-  .new-chat span,
-  .profile span,
-  .composer-hint {
-    display: none;
-  }
-  .composer-tools > .icon-button {
-    margin-left: auto;
-  }
-  .demo-label {
-    display: none;
-  }
-  .welcome-description {
-    font-size: 11px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
-}
+

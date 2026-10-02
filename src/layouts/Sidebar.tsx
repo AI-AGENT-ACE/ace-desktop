@@ -21,7 +21,6 @@ export function Sidebar({
   onSelect,
   onNew,
   onSettings,
-  onTrash,
   onCollapse,
   onRename,
   onUpdate,
@@ -33,7 +32,6 @@ export function Sidebar({
   onSelect: (id: string) => void;
   onNew: () => void;
   onSettings: () => void;
-  onTrash: () => void;
   onCollapse: () => void;
   onRename: (c: Conversation) => void;
   onUpdate: (c: Conversation, action: 'pin' | 'delete') => void;
@@ -197,7 +195,7 @@ export function Sidebar({
         )}
       </div>
       <div className="sidebar-bottom">
-        <ProfileMenu profile={profile} onSettings={onSettings} onTrash={onTrash} />
+        <ProfileMenu profile={profile} onSettings={onSettings} />
       </div>
     </aside>
   );

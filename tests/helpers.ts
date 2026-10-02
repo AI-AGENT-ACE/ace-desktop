@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 export async function openProfileItem(page: Page, name: '설정' | '휴지통') {
-  await page.getByRole('button', { name: '사용자 프로필 메뉴' }).click();
-  await page.getByRole('menuitem', { name, exact: true }).click();
+  await page.getByRole('button', { name: '설정 열기' }).click();
+  if (name === '휴지통') await page.getByRole('button', { name: '휴지통 보기' }).click();
 }
 export async function login(page: Page, seed = false) {
   const response = await page.request.get(`http://127.0.0.1:3002/__test/fixture?seed=${seed}`);

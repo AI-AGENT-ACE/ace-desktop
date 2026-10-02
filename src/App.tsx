@@ -16,13 +16,14 @@ import { CustomTitleBar } from './layouts/CustomTitleBar';
 import { Sidebar } from './layouts/Sidebar';
 import { Modal } from './components/Modal';
 import { ChatComposer, type UploadProgress } from './features/chat/ChatComposer';
+
 import { MessageList } from './features/chat/MessageList';
 import { TrashModal } from './features/trash/TrashModal';
-import { VoiceOverlay } from './features/voice/VoiceOverlay';
 import { AuthGate } from './features/auth/AuthGate';
 import { SettingsModal } from './features/settings/SettingsModal';
 import {
   classifyVoiceCommand,
+  localPolicy,
   systemAdapter,
   toolRequest,
 } from './features/system-actions/adapters/systemAdapter';
@@ -40,7 +41,6 @@ import type {
   SystemActionStatus,
   ToolCall,
   User,
-  VoiceState,
 } from './types';
 import './styles/globals.css';
 import './styles/motion.css';
@@ -71,8 +71,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const [name, setName] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('ace-theme') || 'light');
   const [wake, setWake] = useState(() => localStorage.getItem('ace-wake') !== 'off');
-  const [voice, setVoice] = useState<VoiceState>('idle');
-  const [transcript, setTranscript] = useState('');
   const [action, setAction] = useState<Action | null>(null);
   const [pending, setPending] = useState<PendingAction[]>([]);
   const [sending, setSending] = useState(false);
@@ -116,9 +114,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     };
   }, []);
   useEffect(() => {
-    localStorage.setItem('ace-wake', wake ? 'on' : 'off');
-  }, [wake]);
-  useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(''), 6500);
     return () => clearTimeout(timer);
@@ -135,6 +130,26 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     void register<string>('ace-voice-command', (payload) => {
       if (typeof payload === 'string' && payload.length <= 200) void runVoice(payload.trim());
     });
+    void register<{ tool: string; arguments: Record<string, unknown> }>(
+      'ace-voice-tool-call',
+      (payload) => {
+        if (!payload || typeof payload.tool !== 'string' || !payload.arguments) return;
+        const riskLevel = localPolicy(payload.tool);
+        setPending((previous) => [
+          ...previous,
+          {
+            request: {
+              contractVersion: '1.1',
+              commandType: payload.tool,
+              arguments: payload.arguments,
+              riskLevel,
+              label: payload.tool,
+            },
+            voice: true,
+          },
+        ]);
+      },
+    );
     void register<boolean>('ace-wake-word-changed', (enabled) => {
       if (typeof enabled === 'boolean') setWake(enabled);
     });
@@ -163,6 +178,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       void invoke('hide_voice_overlay');
     };
   }, []);
+  useEffect(() => { localStorage.setItem('ace-wake', wake ? 'on' : 'off'); }, [wake]);
   const update = async (
     conversation: Conversation,
     type: 'pin' | 'delete' | 'rename',
@@ -375,8 +391,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const runVoice = async (text: string) => {
     if (voiceLock.current || executionLock.current) return;
     voiceLock.current = true;
-    setTranscript('');
-    setVoice('idle');
     try {
       const request = classifyVoiceCommand(text);
       if (request.riskLevel === 'BLOCKED') {
@@ -413,7 +427,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       } catch (cause) {
         setNotice(apiErrorMessage(cause));
       }
-    } else setVoice('listening');
+    } else setNotice('음성 Orb는 ACE 데스크톱 앱에서 사용할 수 있습니다.');
   };
   const changeWake = async (enabled: boolean) => {
     if (!isTauri()) {
@@ -447,7 +461,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             }}
             onNew={startNewChat}
             onSettings={() => setModal('settings')}
-            onTrash={() => setModal('trash')}
             onCollapse={() => setCollapsed(true)}
             onRename={(conversation) => {
               setRename(conversation);
@@ -548,22 +561,9 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             onSend={send}
             onVoice={() => void openVoice()}
             busy={busy || (!!active && messages.isLoading)}
-            wake={wake}
           />
         </main>
       </div>
-      {voice !== 'idle' && (
-        <VoiceOverlay
-          state={voice}
-          transcript={transcript}
-          onTranscript={setTranscript}
-          onFinish={() => void runVoice(transcript.trim())}
-          onClose={() => {
-            setVoice('idle');
-            setTranscript('');
-          }}
-        />
-      )}
       {modal === 'trash' && (
         <TrashModal onClose={() => setModal(null)} onChanged={() => void conversations.refresh()} />
       )}

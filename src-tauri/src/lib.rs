@@ -36,6 +36,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(local_commands::initialize(app.handle()));
+            if let Err(error) = voice_recording::cleanup_expired(app.handle()) {
+                eprintln!("ACE voice temp startup cleanup failed: {error}");
+            }
             voice_overlay::create(app)?;
             #[cfg(windows)]
             if let Some(window) = app.get_webview_window("main") {
@@ -79,10 +82,14 @@ pub fn run() {
             voice_overlay::activate_voice_orb,
             voice_overlay::hide_voice_overlay,
             voice_overlay::submit_voice_command,
+            voice_overlay::submit_voice_tool_call,
+            voice_overlay::drag_voice_orb,
             voice_recording::start_voice_recording,
             voice_recording::append_voice_recording_samples,
             voice_recording::stop_voice_recording,
             voice_recording::cancel_voice_recording,
+            voice_recording::discard_voice_recording,
+            voice_recording::upload_voice_recording,
             tray::set_wake_word_enabled,
             wake_word::get_wake_word_status,
             tray::take_pending_settings_request
