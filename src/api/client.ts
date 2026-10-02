@@ -12,6 +12,7 @@ declare module 'axios' {
 const baseURL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '');
 if (!baseURL || !/^https?:\/\//.test(baseURL))
   throw new Error('VITE_API_BASE_URL에 HTTP(S) 백엔드 주소를 설정하세요.');
+export const apiBaseUrl = baseURL;
 export const apiClient = axios.create({
   baseURL,
   timeout: 10000,

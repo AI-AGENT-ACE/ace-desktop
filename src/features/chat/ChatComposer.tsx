@@ -7,11 +7,10 @@ const allowed = /\.(txt|md|csv|json|png|jpe?g|webp|pdf|docx|wav|mp3|m4a)$/i;
 const maximum = (name: string) => /\.(pdf|docx)$/i.test(name) ? 25 * 1024 * 1024 : /\.(wav|mp3|m4a)$/i.test(name) ? 20 * 1024 * 1024 : 10 * 1024 * 1024;
 const sizeLabel = (size: number) => size < 1024 * 1024 ? `${Math.ceil(size / 1024)}KB` : `${(size / 1024 / 1024).toFixed(1)}MB`;
 
-export function ChatComposer({ onSend, onVoice, busy, wake }: {
+export function ChatComposer({ onSend, onVoice, busy }: {
   onSend: (text: string, files: File[], onProgress: (progress: UploadProgress) => void) => Promise<boolean>;
   onVoice: () => void;
   busy: boolean;
-  wake: boolean;
 }) {
   const [text, setText] = useState('');
   const [menu, setMenu] = useState(false);
@@ -62,6 +61,6 @@ export function ChatComposer({ onSend, onVoice, busy, wake }: {
       <div className="composer-tools"><div className="tool-anchor"><button className="icon-button" aria-label="추가 기능" aria-expanded={menu} disabled={busy} onClick={() => setMenu(!menu)}><Plus size={21} /></button>{menu && <div className="tool-menu"><button onClick={() => { setMenu(false); fileInput.current?.click(); }}><Paperclip size={16} />파일 추가</button><p className="composer-file-status"><Image size={13} /> 이미지 · 문서 · 오디오 · 텍스트</p></div>}</div>
         <span className="composer-hint">Shift + Enter로 줄바꿈</span><button className="icon-button" aria-label="음성 입력" onClick={onVoice} disabled={busy}><Mic size={19} /></button><button className="send-button" aria-label="메시지 보내기" disabled={(!text.trim() && !files.length) || busy} onClick={() => void send()}><ArrowUp size={21} /></button>
       </div>
-    </div><footer className="composer-footer"><span><i className={wake ? 'status-dot' : 'status-dot off'} />{wake ? 'Wake Word 듣는 중 · “ACE”라고 불러보세요' : 'Wake Word 꺼짐'}</span></footer></div></div>
+    </div><footer className="composer-footer" aria-hidden="true" /></div></div>
   );
 }
