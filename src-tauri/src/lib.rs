@@ -8,7 +8,14 @@ mod taskbar;
 mod tray;
 mod voice_overlay;
 mod voice_recording;
+#[cfg(all(windows, debug_assertions))]
+mod wake_diagnostic_data;
+#[cfg(all(windows, debug_assertions))]
+mod wake_diagnostics;
+#[cfg(windows)]
+mod wake_kws;
 mod wake_word;
+mod wake_word_setup;
 #[tauri::command]
 fn hide_ace(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -32,6 +39,7 @@ pub fn run() {
         .manage(voice_overlay::VoiceRuntime::default())
         .manage(voice_recording::VoiceRecordingState::default())
         .manage(wake_word::WakeWordRuntime::default())
+        .manage(wake_word_setup::WakeWordSetupRuntime::default())
         .manage(native_tools::NativeToolState::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -53,6 +61,9 @@ pub fn run() {
                 }
             }
             tray::create(app)?;
+            if let Err(error) = wake_word::restore_persisted(app.handle()) {
+                eprintln!("ACE Wake Word restore failed: {error}");
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -91,7 +102,27 @@ pub fn run() {
             voice_recording::discard_voice_recording,
             voice_recording::upload_voice_recording,
             tray::set_wake_word_enabled,
+            wake_word::diagnose_audio_input,
             wake_word::get_wake_word_status,
+            #[cfg(all(windows, debug_assertions))]
+            wake_diagnostics::start_wake_diagnostic,
+            #[cfg(all(windows, debug_assertions))]
+            wake_diagnostics::stop_wake_diagnostic,
+            #[cfg(all(windows, debug_assertions))]
+            wake_diagnostics::get_wake_diagnostic,
+            #[cfg(all(windows, debug_assertions))]
+            wake_diagnostics::retain_wake_setup_diagnostics,
+            wake_word_setup::get_wake_word_setup_status,
+            wake_word_setup::prepare_wake_word_setup,
+            wake_word_setup::start_wake_word_sample,
+            wake_word_setup::start_wake_word_test_sample,
+            wake_word_setup::append_wake_word_sample,
+            wake_word_setup::finish_wake_word_sample,
+            wake_word_setup::generate_wake_word_reference,
+            wake_word_setup::test_wake_word_reference,
+            wake_word_setup::complete_wake_word_setup,
+            wake_word_setup::postpone_wake_word_setup,
+            wake_word_setup::cancel_wake_word_setup,
             tray::take_pending_settings_request
         ])
         .build(tauri::generate_context!())
