@@ -32,6 +32,7 @@ import { attachmentsApi } from './api/attachments.api';
 import { agentApi } from './api/agent.api';
 import { recordVoiceLog } from './api/voice.api';
 import { apiErrorMessage, isCancelled } from './api/client';
+import { runConcurrentAuthRequestCapture } from './api/authCapture.api';
 import { useConversations } from './hooks/useConversations';
 import { useMessages } from './hooks/useMessages';
 import type {
@@ -82,6 +83,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const lock = useRef(false);
   const mutationLock = useRef(false);
   const executionLock = useRef(false);
+  const authCaptureLock = useRef(false);
   const mounted = useRef(true);
   const voiceLock = useRef(false);
   useEffect(() => {
@@ -419,6 +421,18 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       setNotice(apiErrorMessage(cause));
     }
   };
+  const runAuthCapture = async () => {
+    if (authCaptureLock.current) return;
+    authCaptureLock.current = true;
+    try {
+      await runConcurrentAuthRequestCapture();
+      setNotice('동시 인증 요청 3건이 완료되었습니다. Network 기록을 확인해 주세요.');
+    } catch (cause) {
+      setNotice(apiErrorMessage(cause));
+    } finally {
+      authCaptureLock.current = false;
+    }
+  };
   const busy = mutating || sending || !!current || action?.status === 'pending';
   return (
     <div className="app">
@@ -466,6 +480,13 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             <span>
               ACE <span className="header-subtitle">Personal assistant</span>
             </span>
+            {import.meta.env.DEV && (
+              <div className="header-right">
+                <button className="auth-capture-button" onClick={() => void runAuthCapture()}>
+                  동시 인증 요청 테스트
+                </button>
+              </div>
+            )}
           </header>
           {active ? (
             <MessageList key={`messages-${active}`} query={messages} sending={sending} />

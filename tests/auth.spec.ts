@@ -43,7 +43,11 @@ test('미인증에서는 메인 API를 호출하지 않고 작은 창과 다크 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'ACE에 로그인' })).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.locator('.auth-screen')).toHaveCSS('background-color', 'rgb(0, 9, 14)');
+  await expect(page.locator('.auth-screen')).toHaveCSS('background-color', 'rgb(18, 18, 18)');
+  await expect(page.getByRole('button', { name: '로그인', exact: true })).toHaveCSS(
+    'background-color',
+    'rgb(245, 245, 245)',
+  );
   await expect(page.locator('.auth-card')).toHaveCSS('box-shadow', 'none');
   await expect(page.locator('.auth-brand strong')).toHaveCount(0);
   await expect(page.locator('.auth-brand img')).toHaveCSS('width', '68px');
