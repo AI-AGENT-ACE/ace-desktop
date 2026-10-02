@@ -11,9 +11,9 @@ const names: Record<string, string> = {
   'file.delete': '파일 삭제',
 };
 const policies: { value: PermissionPolicy; label: string }[] = [
+  { value: 'DENY', label: '허용 안 함' },
+  { value: 'ASK', label: '실행 전 확인' },
   { value: 'ALWAYS_ALLOW', label: '항상 허용' },
-  { value: 'ASK', label: '확인' },
-  { value: 'ALWAYS_ASK', label: '항상 확인' },
 ];
 export function PermissionSettings({
   permissions,

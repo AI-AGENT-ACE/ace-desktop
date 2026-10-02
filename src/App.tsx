@@ -394,9 +394,17 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     current?.request?.riskLevel ??
     (current?.call?.executionLocation === 'LOCAL' ? toolRequest(current.call).riskLevel : 'SAFE');
   const needsConfirmation =
-    risk !== 'BLOCKED' && (risk === 'CONFIRM' || current?.call?.requiresConfirmation);
+    !current?.call?.denied &&
+    risk !== 'BLOCKED' &&
+    (risk === 'CONFIRM' || current?.call?.requiresConfirmation);
   useEffect(() => {
-    if (current && !needsConfirmation) void execute(current, risk !== 'BLOCKED');
+    if (!current) return;
+    if (current.call?.denied) {
+      setAction({ status: 'error', message: '설정에서 허용하지 않은 기능입니다.' });
+      setPending((previous) => previous.filter((candidate) => candidate !== current));
+      return;
+    }
+    if (!needsConfirmation) void execute(current, risk !== 'BLOCKED');
   }, [current, needsConfirmation, risk]);
   const openVoice = async () => {
     if (isTauri()) {

@@ -63,10 +63,11 @@ export interface AgentSettings {
   createdAt: string;
   updatedAt: string;
 }
-export type PermissionPolicy = 'ALWAYS_ALLOW' | 'ASK' | 'ALWAYS_ASK';
+export type PermissionPolicy = 'DENY' | 'ASK' | 'ALWAYS_ALLOW';
 export interface Permission {
   toolName: string;
   policy: PermissionPolicy;
+  denied: boolean;
   requiresConfirmation: boolean;
   systemConfirmation: boolean;
 }
@@ -108,6 +109,7 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
   executionLocation: 'LOCAL' | 'CLOUD';
   policy: PermissionPolicy;
+  denied: boolean;
   requiresConfirmation: boolean;
   systemConfirmation: boolean;
   ticket: string;

@@ -74,7 +74,9 @@ export function SettingsModal({
             ? {
                 ...item,
                 policy,
-                requiresConfirmation: item.systemConfirmation || policy !== 'ALWAYS_ALLOW',
+                denied: policy === 'DENY',
+                requiresConfirmation:
+                  policy !== 'DENY' && (item.systemConfirmation || policy === 'ASK'),
               }
             : item,
         ),

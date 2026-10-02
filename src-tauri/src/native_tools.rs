@@ -20,6 +20,20 @@ const MAX_CANDIDATES: usize = 5;
 const MAX_CANDIDATE_LENGTH: usize = 100;
 const RESOURCE_TTL: Duration = Duration::from_secs(10 * 60);
 
+fn resource_log(message: impl std::fmt::Display) {
+    if cfg!(debug_assertions) {
+        eprintln!("{message}");
+    }
+}
+
+fn loggable_resource_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 100
+        && id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct EntityReference {
@@ -548,6 +562,7 @@ fn register_resource(
             expires_at: now + RESOURCE_TTL,
         },
     );
+    resource_log(format!("[Resource] issued id={id}"));
     Ok(id)
 }
 
@@ -567,6 +582,9 @@ fn resource(state: &NativeToolState, id: &str, directory: bool) -> Result<PathBu
     let entry = resources.get(id).ok_or("RESOURCE_NOT_FOUND")?;
     if entry.directory != directory || !entry.path.exists() {
         return Err("RESOURCE_NOT_FOUND");
+    }
+    if loggable_resource_id(id) {
+        resource_log(format!("[Validation] resource_id={id} result=passed"));
     }
     Ok(entry.path.clone())
 }
@@ -616,6 +634,10 @@ pub fn execute_native_tool(
 ) -> NativeToolResult {
     let started = Instant::now();
     let risk = policy(&tool);
+    let requested_resource_id = arguments
+        .get("resourceId")
+        .and_then(Value::as_str)
+        .filter(|id| loggable_resource_id(id));
     let result = if version.as_deref().is_some_and(|value| value != "1.1") {
         fail(&tool, "INVALID_ARGUMENT")
     } else if window.label() != "main" || risk == Risk::Blocked {
@@ -623,9 +645,17 @@ pub fn execute_native_tool(
     } else if risk == Risk::Confirm && !confirmed {
         fail(&tool, "CONFIRMATION_REQUIRED")
     } else {
+        if let Some(id) = requested_resource_id {
+            resource_log(format!("[Tool] received resource_id={id}"));
+        }
         dispatch(&app, &state, &tool_state, &tool, &arguments)
             .unwrap_or_else(|code| fail(&tool, code))
     };
+    if result.success {
+        if let Some(id) = requested_resource_id {
+            resource_log(format!("[Execution] resource_id={id} result=success"));
+        }
+    }
     log(&app, &tool, risk, started, &result);
     result
 }
@@ -1130,5 +1160,14 @@ mod tests {
             "RESOURCE_EXPIRED"
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn resource_log_accepts_only_generated_id_shape() {
+        assert!(loggable_resource_id("file_123456789"));
+        assert!(loggable_resource_id("folder_987654321"));
+        assert!(!loggable_resource_id("file_123\naccess_token=secret"));
+        assert!(!loggable_resource_id("C:\\Users\\name\\secret.txt"));
+        assert!(!loggable_resource_id(""));
     }
 }
