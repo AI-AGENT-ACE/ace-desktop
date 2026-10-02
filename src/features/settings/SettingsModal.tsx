@@ -5,19 +5,28 @@ import { apiErrorMessage, isCancelled } from '../../api/client';
 import { Modal } from '../../components/Modal';
 import type { AgentSettings, Permission, PermissionPolicy } from '../../types';
 import { PermissionSettings } from './PermissionSettings';
+import { WakeDiagnosticPanel } from '../voice/WakeDiagnosticPanel';
 export function SettingsModal({
   theme,
   wake,
+  wakeState,
   onTheme,
   onWake,
+  wakeSetupCompleted,
+  wakeReferenceExists,
+  onWakeSetup,
   onTrash,
   onClose,
   onLogout,
 }: {
   theme: string;
   wake: boolean;
+  wakeState: 'disabled' | 'starting' | 'listening' | 'triggered' | 'paused' | 'error';
   onTheme: (value: string) => void;
   onWake: (value: boolean) => void;
+  wakeSetupCompleted: boolean;
+  wakeReferenceExists: boolean;
+  onWakeSetup: () => void;
   onTrash: () => void;
   onClose: () => void;
   onLogout: () => void;
@@ -121,19 +130,45 @@ export function SettingsModal({
       </div>
       <div className="setting-row">
         <div>
-          <strong>Wake Word</strong>
-          <p>환경설정만 저장하며 음성 감지는 아직 연결되지 않았습니다.</p>
+          <strong>음성 호출 · Wake Word</strong>
+          <p>
+            {wakeState === 'starting'
+              ? '마이크와 음성 감지 엔진을 시작하고 있습니다.'
+              : wakeState === 'listening'
+                ? '음성 감지 중입니다. “ACE”라고 불러보세요.'
+                : wakeState === 'triggered'
+                  ? '호출어를 감지했습니다.'
+                  : wakeState === 'paused'
+                    ? '음성 입력 중에는 호출어 감지를 잠시 멈춥니다.'
+                    : wakeState === 'error'
+                      ? '음성 감지를 시작하지 못했습니다. Tray에서 다시 시도할 수 있습니다.'
+                      : wakeReferenceExists
+                        ? '내 목소리를 사용하여 “ACE” 호출을 감지합니다.'
+                        : '음성 호출을 사용하려면 먼저 목소리를 등록해주세요.'}
+          </p>
         </div>
         <button
           className={`toggle ${wake ? 'on' : ''}`}
           role="switch"
           aria-checked={wake}
           aria-label="Wake Word 활성화"
-          onClick={() => onWake(!wake)}
+          onClick={() =>
+            wakeReferenceExists && wakeSetupCompleted ? onWake(!wake) : onWakeSetup()
+          }
         >
           <span />
         </button>
       </div>
+      <div className="wake-settings-detail">
+        <span>
+          호출어 <strong>ACE</strong>
+        </span>
+        <span>음성 처리는 이 기기에서 수행됩니다.</span>
+        <button className="settings-navigation" onClick={onWakeSetup}>
+          {wakeReferenceExists ? '목소리 다시 등록' : '음성 호출 설정하기'}
+        </button>
+      </div>
+      {import.meta.env.DEV && <WakeDiagnosticPanel />}
       {!settings ? (
         <p className="state-text">계정 설정 불러오는 중…</p>
       ) : (
@@ -180,7 +215,10 @@ export function SettingsModal({
           <strong>삭제된 대화</strong>
           <p>30일 동안 대화를 복구할 수 있어요.</p>
         </div>
-        <button className="settings-navigation" onClick={onTrash}><Trash2 size={15} />휴지통 보기</button>
+        <button className="settings-navigation" onClick={onTrash}>
+          <Trash2 size={15} />
+          휴지통 보기
+        </button>
       </div>
       <div className="modal-actions">
         <button onClick={onLogout}>로그아웃</button>

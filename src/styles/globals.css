@@ -860,3 +860,243 @@ p {
   width: 100%;
 }
 
+.wake-settings-detail {
+  display: grid;
+  gap: 8px;
+  margin: -8px 0 14px;
+  padding: 14px 16px;
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wake-settings-detail .settings-navigation {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+.wake-setup {
+  display: grid;
+  gap: 16px;
+  min-width: min(430px, 76vw);
+  padding: 4px 2px 2px;
+  text-align: center;
+}
+
+.wake-setup h2,
+.wake-setup p {
+  margin: 0;
+}
+
+.wake-setup p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.wake-setup-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--surface);
+  background: var(--foreground);
+}
+
+.wake-privacy {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.wake-privacy svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.wake-setup-center {
+  display: grid;
+  min-height: 210px;
+  gap: 14px;
+  place-items: center;
+  align-content: center;
+}
+
+.wake-dots {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.wake-dots span {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+}
+
+.wake-dots span.done {
+  border-color: var(--foreground);
+  background: var(--foreground);
+}
+
+.wake-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.wake-record {
+  display: inline-flex;
+  min-height: 44px;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+}
+
+.wake-record.active {
+  color: var(--surface);
+  background: var(--foreground);
+}
+
+.wake-setup .text-button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+.toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: var(--foreground);
+  color: var(--background);
+  padding: 12px 17px;
+  border-radius: 8px;
+  box-shadow: 0 3px 15px var(--shadow);
+  z-index: 40;
+  font-size: 12px;
+  max-width: calc(100% - 40px);
+}
+.toast button {
+  color: inherit;
+}
+.skeletons > div {
+  height: 29px;
+  margin: 8px;
+  background: var(--selected);
+  border-radius: 5px;
+  animation: pulse 1.5s infinite;
+}
+.spin {
+  animation: spin 1.2s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+@media (max-width: 900px) {
+  .sidebar {
+    width: 240px;
+  }
+  .suggestions {
+    gap: 8px;
+  }
+  .suggestions button {
+    padding: 15px 11px;
+  }
+  .suggestions span {
+    font-size: 9px;
+  }
+  .header-subtitle {
+    display: none;
+  }
+}
+@media (max-width: 680px) {
+  .sidebar {
+    width: 210px;
+    padding: 0 10px;
+  }
+  .chat-header {
+    padding: 0 16px;
+  }
+  .chat-content,
+  .system-action {
+    width: calc(100% - 32px);
+  }
+  .welcome {
+    padding: 15px;
+  }
+  .suggestions {
+    grid-template-columns: 1fr;
+    margin-top: 25px;
+  }
+  .suggestions button {
+    padding: 13px 15px;
+    gap: 4px;
+  }
+  .suggestions button > svg:first-child {
+    display: none;
+  }
+  .welcome-inner {
+    padding-bottom: 0;
+  }
+  .welcome-mark,
+  .eyebrow,
+  .welcome-note {
+    display: none;
+  }
+  .welcome h1 {
+    font-size: 23px;
+  }
+  .new-chat span,
+  .profile span,
+  .composer-hint {
+    display: none;
+  }
+  .composer-tools > .icon-button {
+    margin-left: auto;
+  }
+  .demo-label {
+    display: none;
+  }
+  .welcome-description {
+    font-size: 11px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

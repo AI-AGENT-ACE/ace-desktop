@@ -36,3 +36,7 @@ coverage/
 *.njsproj
 *.sln
 *.sw?
+
+# Local voice fixtures and personal diagnostic captures
+src-tauri/resources/wake-word/samples/*.wav
+*.rpw

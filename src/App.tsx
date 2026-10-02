@@ -17,10 +17,22 @@ import { Sidebar } from './layouts/Sidebar';
 import { Modal } from './components/Modal';
 import { ChatComposer, type UploadProgress } from './features/chat/ChatComposer';
 
+type WakeRuntimeState = 'disabled' | 'starting' | 'listening' | 'triggered' | 'paused' | 'error';
+type WakeRuntimeStatus = {
+  state: WakeRuntimeState;
+  enabled: boolean;
+  error?: string;
+};
+type WakeSetupStatus = {
+  completedSamples: number;
+  totalSamples: number;
+  settings: { enabled: boolean; setupCompleted: boolean; referenceExists: boolean };
+};
 import { MessageList } from './features/chat/MessageList';
 import { TrashModal } from './features/trash/TrashModal';
 import { AuthGate } from './features/auth/AuthGate';
 import { SettingsModal } from './features/settings/SettingsModal';
+import { WakeWordSetupModal } from './features/voice/WakeWordSetupModal';
 import {
   classifyVoiceCommand,
   localPolicy,
@@ -70,7 +82,12 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const [rename, setRename] = useState<Conversation | null>(null);
   const [name, setName] = useState('');
   const [theme, setTheme] = useState(() => localStorage.getItem('ace-theme') || 'light');
-  const [wake, setWake] = useState(() => localStorage.getItem('ace-wake') !== 'off');
+  const [wake, setWake] = useState(false);
+  const [wakeState, setWakeState] = useState<WakeRuntimeState>('disabled');
+  const [wakeSetupCompleted, setWakeSetupCompleted] = useState(false);
+  const [wakeReferenceExists, setWakeReferenceExists] = useState(false);
+  const [wakeSetupOpen, setWakeSetupOpen] = useState(false);
+  const [wakeOnboarding, setWakeOnboarding] = useState(false);
   const [action, setAction] = useState<Action | null>(null);
   const [pending, setPending] = useState<PendingAction[]>([]);
   const [sending, setSending] = useState(false);
@@ -153,20 +170,32 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     void register<boolean>('ace-wake-word-changed', (enabled) => {
       if (typeof enabled === 'boolean') setWake(enabled);
     });
-    void register<{ state: string; enabled: boolean; error?: string }>(
-      'ace-wake-word-status',
-      (status) => {
-        setWake(status.enabled);
-        if (status.state === 'error' && status.error) setNotice(status.error);
-      },
-    );
+    const applyWakeStatus = (status: WakeRuntimeStatus) => {
+      setWake(status.enabled);
+      setWakeState(status.state);
+      if (status.state === 'error' && status.error) setNotice(status.error);
+    };
+    void register<WakeRuntimeStatus>('ace-wake-word-status', applyWakeStatus);
     void register('ace-open-settings', () => {
       setModal('settings');
       void invoke('take_pending_settings_request');
     });
-    void invoke('set_wake_word_enabled', { enabled: wake }).catch((cause) =>
-      setNotice(apiErrorMessage(cause)),
-    );
+    void invoke<WakeSetupStatus>('get_wake_word_setup_status')
+      .then((setup) => {
+        if (disposed) return undefined;
+        setWake(setup.settings.enabled);
+        setWakeSetupCompleted(setup.settings.setupCompleted);
+        setWakeReferenceExists(setup.settings.referenceExists);
+        if (!localStorage.getItem('ace-onboarding-completed')) {
+          setWakeOnboarding(true);
+          setWakeSetupOpen(true);
+        }
+        return invoke<WakeRuntimeStatus>('get_wake_word_status');
+      })
+      .then((status) => {
+        if (!disposed && status) applyWakeStatus(status);
+      })
+      .catch((cause) => setNotice(apiErrorMessage(cause)));
     void invoke<boolean>('take_pending_settings_request')
       .then((pending) => {
         if (!disposed && pending) setModal('settings');
@@ -178,7 +207,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       void invoke('hide_voice_overlay');
     };
   }, []);
-  useEffect(() => { localStorage.setItem('ace-wake', wake ? 'on' : 'off'); }, [wake]);
   const update = async (
     conversation: Conversation,
     type: 'pin' | 'delete' | 'rename',
@@ -437,7 +465,9 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     try {
       await invoke('set_wake_word_enabled', { enabled });
       setWake(enabled);
+      if (!enabled) setWakeState('disabled');
     } catch (cause) {
+      setWakeState('error');
       setNotice(apiErrorMessage(cause));
     }
   };
@@ -571,11 +601,32 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
         <SettingsModal
           theme={theme}
           wake={wake}
+          wakeState={wakeState}
           onTheme={setTheme}
           onWake={(enabled) => void changeWake(enabled)}
+          wakeSetupCompleted={wakeSetupCompleted}
+          wakeReferenceExists={wakeReferenceExists}
+          onWakeSetup={() => setWakeSetupOpen(true)}
           onTrash={() => setModal('trash')}
           onClose={() => setModal(null)}
           onLogout={() => void logout()}
+        />
+      )}
+      {wakeSetupOpen && (
+        <WakeWordSetupModal
+          onboarding={wakeOnboarding}
+          onClose={() => {
+            if (wakeOnboarding) localStorage.setItem('ace-onboarding-completed', 'true');
+            setWakeOnboarding(false);
+            setWakeSetupOpen(false);
+          }}
+          onCompleted={() => {
+            localStorage.setItem('ace-onboarding-completed', 'true');
+            setWake(true);
+            setWakeState('listening');
+            setWakeSetupCompleted(true);
+            setWakeReferenceExists(true);
+          }}
         />
       )}
       {rename && (

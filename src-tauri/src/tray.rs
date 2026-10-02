@@ -77,9 +77,20 @@ fn wake_word_text(status: &WakeWordStatus) -> &'static str {
     match status.state {
         WakeWordState::Disabled => "Wake Word: 꺼짐",
         WakeWordState::Starting => "Wake Word: 시작 중",
-        WakeWordState::Listening => "Wake Word: 듣는 중",
+        WakeWordState::Listening => "Wake Word: 켜짐",
         WakeWordState::Triggered => "Wake Word: 감지됨",
-        WakeWordState::Error => "Wake Word: 오류",
+        WakeWordState::Paused => "Wake Word: 일시 정지",
+        WakeWordState::Error => {
+            if status
+                .error_code
+                .as_deref()
+                .is_some_and(|code| code.starts_with("WAKE_MIC_"))
+            {
+                "Wake Word: 마이크 오류 · 다시 시도"
+            } else {
+                "Wake Word: 엔진 오류 · 다시 시도"
+            }
+        }
     }
 }
 
@@ -110,8 +121,12 @@ fn hide_main(app: &AppHandle) -> Result<(), String> {
 }
 
 fn toggle_wake_word(app: &AppHandle) -> Result<(), String> {
-    let enabled = !app.state::<wake_word::WakeWordRuntime>().status().enabled;
-    wake_word::set_enabled(app, enabled).map(|_| ())
+    let status = app.state::<wake_word::WakeWordRuntime>().status();
+    if status.state == WakeWordState::Error && status.enabled {
+        wake_word::retry(app).map(|_| ())
+    } else {
+        wake_word::set_enabled(app, !status.enabled).map(|_| ())
+    }
 }
 
 fn open_settings(app: &AppHandle) -> Result<(), String> {
@@ -255,14 +270,26 @@ mod tests {
             state,
             enabled,
             error: None,
+            error_code: None,
         };
         assert_eq!(
             wake_word_text(&status(WakeWordState::Listening, true)),
-            "Wake Word: 듣는 중"
+            "Wake Word: 켜짐"
         );
         assert_eq!(
             wake_word_text(&status(WakeWordState::Disabled, false)),
             "Wake Word: 꺼짐"
+        );
+
+        let microphone_error = WakeWordStatus {
+            state: WakeWordState::Error,
+            enabled: true,
+            error: Some("마이크 초기화에 실패했습니다.".to_owned()),
+            error_code: Some("WAKE_MIC_CONFIG_FAILED".to_owned()),
+        };
+        assert_eq!(
+            wake_word_text(&microphone_error),
+            "Wake Word: 마이크 오류 · 다시 시도"
         );
     }
 }
