@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::Manager;
 mod local_commands;
+mod local_stt;
 mod native_tools;
 mod native_windows;
 #[cfg(windows)]
@@ -103,6 +104,7 @@ pub fn run() {
             voice_recording::cancel_voice_recording,
             voice_recording::discard_voice_recording,
             voice_recording::upload_voice_recording,
+            voice_recording::transcribe_local_portfolio,
             tray::set_wake_word_enabled,
             wake_word::diagnose_audio_input,
             wake_word::get_wake_word_status,

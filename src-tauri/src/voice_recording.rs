@@ -201,7 +201,10 @@ fn cleanup_expired_at(
     {
         let path = entry.path();
         let valid = path.file_name().and_then(|v| v.to_str()).is_some_and(|v| {
-            v.starts_with("voice_") && (v.ends_with(".wav") || v.ends_with(".wav.part"))
+            v.starts_with("voice_")
+                && (v.ends_with(".wav")
+                    || v.ends_with(".wav.part")
+                    || v.ends_with(".local-stt.json"))
         });
         if !valid {
             continue;
@@ -383,6 +386,29 @@ pub fn discard_voice_recording(
 }
 
 #[tauri::command]
+pub async fn transcribe_local_portfolio(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    recording_id: String,
+) -> Result<crate::local_stt::LocalTranscript, String> {
+    require_voice_window(&window)?;
+    let ready = app
+        .state::<VoiceRecordingState>()
+        .ready
+        .lock()
+        .map_err(|_| "RECORDING_FAILED")?
+        .remove(&recording_id)
+        .ok_or("VOICE_FILE_INVALID")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = crate::local_stt::transcribe(&ready.path);
+        let _ = fs::remove_file(&ready.path);
+        outcome
+    })
+    .await
+    .map_err(|_| "LOCAL_STT_FAILED".to_owned())?
+}
+
+#[tauri::command]
 pub async fn upload_voice_recording(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -480,6 +506,17 @@ pub async fn upload_voice_recording(
             Ok(v) if v.status().as_u16() == 401 => {
                 outcome = Err("UNAUTHENTICATED".into());
                 break;
+            }
+            Ok(v) if v.status().as_u16() == 503 => {
+                // Only propagate this fixed public code; never expose arbitrary server bodies.
+                let unavailable = v.json::<Value>().await.ok().is_some_and(|body| {
+                    body.get("code").and_then(Value::as_str) == Some("AI_SERVER_UNAVAILABLE")
+                });
+                outcome = Err("VOICE_PROCESSING_FAILED".into());
+                if unavailable {
+                    outcome = Err("AI_SERVER_UNAVAILABLE".into());
+                    break;
+                }
             }
             Ok(v) => {
                 outcome = Err("VOICE_PROCESSING_FAILED".into());
@@ -585,8 +622,10 @@ mod tests {
         let directory = std::env::temp_dir().join(format!("ace-cleanup-{}", Uuid::new_v4()));
         fs::create_dir_all(&directory).unwrap();
         let old = directory.join("voice_old.wav");
+        let transcript = directory.join("voice_old.local-stt.json");
         let keep = directory.join("unrelated.txt");
         fs::write(&old, b"x").unwrap();
+        fs::write(&transcript, b"{}").unwrap();
         fs::write(&keep, b"x").unwrap();
         assert_eq!(
             cleanup_expired_at(
@@ -595,7 +634,7 @@ mod tests {
                 Duration::from_secs(1)
             )
             .unwrap(),
-            1
+            2
         );
         assert!(keep.exists());
         fs::remove_dir_all(directory).unwrap();

@@ -4,8 +4,10 @@ import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, useMotionValue } from 'motion/react';
 import { VoiceOverlay } from './VoiceOverlay';
 import { apiBaseUrl, apiErrorMessage } from '../../api/client';
-import { getSession } from '../../api/session';
+import { requestVoiceAccessToken } from '../../api/voice-session';
+import { RecordingEndpoint } from './recording-endpoint';
 import '../../styles/globals.css';
+const localPortfolioMode = import.meta.env.VITE_VOICE_MODE === 'local-portfolio';
 
 type RecordingResult = {
   recordingId: string;
@@ -15,8 +17,28 @@ type RecordingResult = {
   samplesWritten: number;
   durationMs: number;
 };
-type VoicePhase = 'IDLE' | 'LISTENING' | 'RECORDING' | 'FINALIZING' | 'READY' | 'UPLOADING' | 'PROCESSING' | 'EXECUTING' | 'SUCCESS' | 'ERROR';
-type UploadResult = { recordingId: string; state: 'SUCCESS'; result: { transcript?: string; content?: string; type?: string; tool?: string; arguments?: Record<string, unknown> } };
+type VoicePhase =
+  | 'IDLE'
+  | 'LISTENING'
+  | 'RECORDING'
+  | 'FINALIZING'
+  | 'READY'
+  | 'UPLOADING'
+  | 'PROCESSING'
+  | 'EXECUTING'
+  | 'SUCCESS'
+  | 'ERROR';
+type UploadResult = {
+  recordingId: string;
+  state: 'SUCCESS';
+  result: {
+    transcript?: string;
+    content?: string;
+    type?: string;
+    tool?: string;
+    arguments?: Record<string, unknown>;
+  };
+};
 const voiceErrors: Record<string, string> = {
   RECORDING_FAILED: '음성 녹음 중 문제가 발생했습니다.',
   WAV_FINALIZE_FAILED: '음성 녹음 중 문제가 발생했습니다.',
@@ -27,6 +49,11 @@ const voiceErrors: Record<string, string> = {
   VOICE_TIMEOUT: '음성을 인식하는 중 문제가 발생했습니다.',
   VOICE_FILE_INVALID: '음성을 인식하지 못했습니다.',
   DUPLICATE_VOICE_SESSION: '이미 음성 요청을 처리하고 있습니다.',
+  UNAUTHENTICATED: '로그인이 만료되었습니다. 메인 창에서 다시 로그인해 주세요.',
+  AI_SERVER_UNAVAILABLE:
+    '음성 AI 서버가 연결되지 않았습니다. 백엔드의 AI_SERVER_URL 설정을 확인해 주세요.',
+  LOCAL_STT_NOT_INSTALLED: '로컬 음성 인식 모델을 설치해 주세요.',
+  LOCAL_STT_FAILED: '로컬 음성 인식에 실패했습니다. 다시 말해 주세요.',
 };
 const voiceErrorMessage = (cause: unknown) => {
   const raw = typeof cause === 'string' ? cause : cause instanceof Error ? cause.message : '';
@@ -51,6 +78,7 @@ export function VoiceWindow() {
   const finalizing = useRef(false);
   const writeFailure = useRef<unknown>(null);
   const microphoneGeneration = useRef(0);
+  const speechDetected = useRef(false);
 
   const releaseAudio = async () => {
     microphoneGeneration.current += 1;
@@ -82,7 +110,7 @@ export function VoiceWindow() {
     recordingActive.current = false;
     setRecording(false);
     setPhase('FINALIZING');
-    voiceLog('manual stop requested');
+    voiceLog('stop requested');
     try {
       await releaseAudio();
       voiceLog('recording finalizing');
@@ -93,42 +121,77 @@ export function VoiceWindow() {
         throw new Error('RECORDING_FAILED');
       }
       const result = await invoke<RecordingResult>('stop_voice_recording');
-      voiceLog('recording finalized', { samples: result.samplesWritten, durationMs: result.durationMs });
-    setPhase('READY');
-    const session = getSession();
-    if (!session) {
-      await invoke('discard_voice_recording', { recordingId: result.recordingId });
-      throw new Error('로그인이 필요합니다.');
-    }
-    setPhase('UPLOADING');
-    voiceLog('transcription started');
-    const processingTimer = window.setTimeout(() => setPhase('PROCESSING'), 500);
-    const uploaded = await invoke<UploadResult>('upload_voice_recording', {
-      recordingId: result.recordingId,
-      apiBaseUrl,
-      accessToken: session.accessToken,
-      conversationId: null,
-    }).finally(() => window.clearTimeout(processingTimer));
-    if (uploaded.result.transcript || uploaded.result.content)
-      setText(uploaded.result.transcript || uploaded.result.content || '');
-    if (uploaded.result.type === 'tool_call' && uploaded.result.tool && uploaded.result.arguments) {
-      setPhase('EXECUTING');
-      await new Promise((resolve) => window.setTimeout(resolve, 420));
-      setPhase('SUCCESS');
-      await new Promise((resolve) => window.setTimeout(resolve, 450));
-      setVisible(false);
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-      await invoke('submit_voice_tool_call', {
-        tool: uploaded.result.tool,
-        arguments: uploaded.result.arguments,
+      voiceLog('recording finalized', {
+        samples: result.samplesWritten,
+        durationMs: result.durationMs,
       });
-    } else {
-      setPhase('SUCCESS');
-      await new Promise((resolve) => window.setTimeout(resolve, 650));
-      setVisible(false);
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-      await invoke('hide_voice_overlay');
-    }
+      setPhase('READY');
+      if (localPortfolioMode) {
+        if (!speechDetected.current) {
+          await invoke('discard_voice_recording', { recordingId: result.recordingId });
+          throw new Error('VOICE_RECORDING_EMPTY');
+        }
+        setPhase('PROCESSING');
+        const generation = microphoneGeneration.current;
+        const recognized = await invoke<{ transcript: string; portfolioRequested: boolean }>(
+          'transcribe_local_portfolio',
+          { recordingId: result.recordingId },
+        );
+        if (generation !== microphoneGeneration.current) return result;
+        setText(recognized.transcript);
+        if (!recognized.portfolioRequested) {
+          throw new Error(
+            recognized.transcript
+              ? `“${recognized.transcript}”로 들었어요. “바탕화면에서 포트폴리오 열어줘”라고 말해 주세요.`
+              : '음성을 인식하지 못했습니다. 다시 말해 주세요.',
+          );
+        }
+        setPhase('EXECUTING');
+        await invoke('submit_voice_tool_call', {
+          tool: 'file.open',
+          arguments: { directory: 'desktop', path: '김환성_포트폴리오.pdf' },
+        });
+        setVisible(false);
+        setPhase('IDLE');
+        return result;
+      }
+      const accessToken = await requestVoiceAccessToken().catch(async (cause) => {
+        await invoke('discard_voice_recording', { recordingId: result.recordingId });
+        throw cause;
+      });
+      setPhase('UPLOADING');
+      voiceLog('transcription started');
+      const processingTimer = window.setTimeout(() => setPhase('PROCESSING'), 500);
+      const uploaded = await invoke<UploadResult>('upload_voice_recording', {
+        recordingId: result.recordingId,
+        apiBaseUrl,
+        accessToken,
+        conversationId: null,
+      }).finally(() => window.clearTimeout(processingTimer));
+      if (uploaded.result.transcript || uploaded.result.content)
+        setText(uploaded.result.transcript || uploaded.result.content || '');
+      if (
+        uploaded.result.type === 'tool_call' &&
+        uploaded.result.tool &&
+        uploaded.result.arguments
+      ) {
+        setPhase('EXECUTING');
+        await new Promise((resolve) => window.setTimeout(resolve, 420));
+        setPhase('SUCCESS');
+        await new Promise((resolve) => window.setTimeout(resolve, 450));
+        setVisible(false);
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+        await invoke('submit_voice_tool_call', {
+          tool: uploaded.result.tool,
+          arguments: uploaded.result.arguments,
+        });
+      } else {
+        setPhase('SUCCESS');
+        await new Promise((resolve) => window.setTimeout(resolve, 650));
+        setVisible(false);
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+        await invoke('hide_voice_overlay');
+      }
       return result;
     } finally {
       finalizing.current = false;
@@ -179,7 +242,10 @@ export function VoiceWindow() {
       writeQueue.current = Promise.resolve();
       setRecording(true);
       setPhase('RECORDING');
+      const endpoint = new RecordingEndpoint();
+      speechDetected.current = false;
       processor.onaudioprocess = (event) => {
+        if (!recordingActive.current || finalizing.current) return;
         const channel = event.inputBuffer.getChannelData(0);
         let squareSum = 0;
         for (let index = 0; index < channel.length; index += 1)
@@ -195,6 +261,15 @@ export function VoiceWindow() {
             writeFailure.current = cause;
             voiceLog('PCM append failed', cause);
           });
+        const end = endpoint.feed(rms, (channel.length / context.sampleRate) * 1000);
+        speechDetected.current = endpoint.hasSpeech;
+        if (end) {
+          voiceLog('automatic stop requested', { reason: end });
+          void stopAndSave().catch((cause) => {
+            setPhase('ERROR');
+            setError(voiceErrorMessage(cause));
+          });
+        }
       };
       source.connect(processor);
       processor.connect(gain);
@@ -262,19 +337,20 @@ export function VoiceWindow() {
     }
   };
 
-  const visualState = error || phase === 'ERROR'
-    ? 'ERROR'
-    : phase === 'FINALIZING' || phase === 'UPLOADING'
-      ? 'TRANSCRIBING'
-      : phase === 'PROCESSING'
-        ? 'THINKING'
-        : phase === 'EXECUTING'
-          ? 'EXECUTING'
-          : phase === 'SUCCESS'
-            ? 'SUCCESS'
-            : phase === 'IDLE'
-              ? 'IDLE'
-              : 'LISTENING';
+  const visualState =
+    error || phase === 'ERROR'
+      ? 'ERROR'
+      : phase === 'FINALIZING' || phase === 'UPLOADING'
+        ? 'TRANSCRIBING'
+        : phase === 'PROCESSING'
+          ? 'THINKING'
+          : phase === 'EXECUTING'
+            ? 'EXECUTING'
+            : phase === 'SUCCESS'
+              ? 'SUCCESS'
+              : phase === 'IDLE'
+                ? 'IDLE'
+                : 'LISTENING';
 
   return (
     <div className="voice-window">
