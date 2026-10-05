@@ -65,6 +65,15 @@ fn resample(samples: &[i16], rate: u32) -> Vec<i16> {
 }
 
 pub fn transcribe(path: &Path) -> Result<LocalTranscript, String> {
+    // The 8-beam trial was slower without a positive-command accuracy benchmark.
+    transcribe_with_beam(path, 5)
+}
+
+/// Offline comparison entry point. No transcript is logged or retained.
+pub fn transcribe_with_beam(path: &Path, beam: usize) -> Result<LocalTranscript, String> {
+    if ![5, 8].contains(&beam) {
+        return Err("LOCAL_STT_INVALID_CONFIG".into());
+    }
     let directory = std::env::var_os("ACE_LOCAL_STT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.local/whisper"));
@@ -130,6 +139,7 @@ pub fn transcribe(path: &Path) -> Result<LocalTranscript, String> {
         .arg("-f")
         .arg(&wav)
         .args(["-l", "ko", "-t", "4", "-ng", "-nf", "-nt", "-np", "-oj"])
+        .args(["-bs", &beam.to_string(), "-tp", "0"])
         .arg("-of")
         .arg(&prefix)
         .stdin(Stdio::null())
