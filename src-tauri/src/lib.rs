@@ -16,6 +16,8 @@ mod wake_diagnostics;
 mod wake_kws;
 mod wake_word;
 mod wake_word_setup;
+#[cfg(windows)]
+mod wake_setup_capture;
 #[tauri::command]
 fn hide_ace(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -113,10 +115,10 @@ pub fn run() {
             #[cfg(all(windows, debug_assertions))]
             wake_diagnostics::retain_wake_setup_diagnostics,
             wake_word_setup::get_wake_word_setup_status,
+            wake_word_setup::set_wake_word_sensitivity,
             wake_word_setup::prepare_wake_word_setup,
             wake_word_setup::start_wake_word_sample,
             wake_word_setup::start_wake_word_test_sample,
-            wake_word_setup::append_wake_word_sample,
             wake_word_setup::finish_wake_word_sample,
             wake_word_setup::generate_wake_word_reference,
             wake_word_setup::test_wake_word_reference,

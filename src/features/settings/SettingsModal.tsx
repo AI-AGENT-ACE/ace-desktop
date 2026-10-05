@@ -6,6 +6,7 @@ import { Modal } from '../../components/Modal';
 import type { AgentSettings, Permission, PermissionPolicy } from '../../types';
 import { PermissionSettings } from './PermissionSettings';
 import { WakeDiagnosticPanel } from '../voice/WakeDiagnosticPanel';
+import { WakeSensitivitySettings } from '../voice/WakeSensitivitySettings';
 export function SettingsModal({
   theme,
   wake,
@@ -168,6 +169,7 @@ export function SettingsModal({
           {wakeReferenceExists ? '목소리 다시 등록' : '음성 호출 설정하기'}
         </button>
       </div>
+      {wakeReferenceExists && <WakeSensitivitySettings />}
       {import.meta.env.DEV && <WakeDiagnosticPanel />}
       {!settings ? (
         <p className="state-text">계정 설정 불러오는 중…</p>

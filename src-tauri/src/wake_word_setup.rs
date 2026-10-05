@@ -17,12 +17,32 @@ const MIN_RMS: f64 = 0.008;
 const MAX_CLIPPING_RATIO: f64 = 0.02;
 const SILENCE_AMPLITUDE: f32 = 0.01;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum WakeSensitivity {
+    #[default]
+    Standard,
+    Sensitive,
+}
+
+impl WakeSensitivity {
+    #[cfg(windows)]
+    pub(crate) fn apply(self, reference: &mut rustpotter::WakewordRef) {
+        if self == Self::Sensitive {
+            // Preserve an already more sensitive personal model.
+            reference.threshold = Some(reference.threshold.unwrap_or(0.52).min(0.48));
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceActivationSettings {
     pub enabled: bool,
     pub setup_completed: bool,
     pub reference_exists: bool,
+    #[serde(default)]
+    pub sensitivity: WakeSensitivity,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,6 +80,11 @@ struct SetupRecording {
 #[derive(Default)]
 pub struct WakeWordSetupRuntime {
     recording: Mutex<Option<SetupRecording>>,
+    #[cfg(windows)]
+    capture: Mutex<Option<crate::wake_setup_capture::Capture>>,
+    device_identity: Mutex<Option<String>>,
+    test_result: Mutex<Option<bool>>,
+    successful_tests: Mutex<usize>,
 }
 
 fn require_main(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -206,32 +231,17 @@ pub fn prepare_wake_word_setup(
 }
 
 #[tauri::command]
-pub fn start_wake_word_sample(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    sample_rate: u32,
-) -> Result<(), String> {
+pub fn start_wake_word_sample(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     require_main(&window)?;
-    if !(8_000..=192_000).contains(&sample_rate) {
-        return Err("WAKE_SAMPLE_FORMAT_INVALID".into());
-    }
     let paths = sample_paths(&app)?;
     if paths.len() >= SAMPLE_TOTAL {
         return Err("WAKE_SAMPLE_LIMIT_REACHED".into());
     }
     let path = staging_dir(&app)?.join(format!("sample_{:02}.wav", paths.len() + 1));
-    begin_recording(&app, path, sample_rate)
+    begin_native_recording(&app, path, false)
 }
 
 fn begin_recording(app: &AppHandle, path: PathBuf, sample_rate: u32) -> Result<(), String> {
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let writer = hound::WavWriter::create(&path, spec)
-        .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED".to_owned())?;
     let runtime = app.state::<WakeWordSetupRuntime>();
     let mut recording = runtime
         .recording
@@ -240,6 +250,14 @@ fn begin_recording(app: &AppHandle, path: PathBuf, sample_rate: u32) -> Result<(
     if recording.is_some() {
         return Err("WAKE_SAMPLE_ALREADY_RECORDING".into());
     }
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let writer = hound::WavWriter::create(&path, spec)
+        .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED".to_owned())?;
     *recording = Some(SetupRecording {
         writer,
         path,
@@ -257,35 +275,62 @@ fn begin_recording(app: &AppHandle, path: PathBuf, sample_rate: u32) -> Result<(
 pub fn start_wake_word_test_sample(
     app: AppHandle,
     window: tauri::WebviewWindow,
-    sample_rate: u32,
 ) -> Result<(), String> {
     require_main(&window)?;
-    if !(8_000..=192_000).contains(&sample_rate) || !candidate_reference_path(&app)?.is_file() {
+    if !candidate_reference_path(&app)?.is_file() {
         return Err("WAKE_TEST_NOT_READY".into());
     }
-    begin_recording(&app, staging_dir(&app)?.join("test.wav"), sample_rate)
+    begin_native_recording(&app, staging_dir(&app)?.join("test.wav"), true)
 }
 
-#[tauri::command]
-pub fn append_wake_word_sample(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    samples: Vec<f32>,
-) -> Result<(), String> {
-    require_main(&window)?;
-    if samples.is_empty()
-        || samples.len() > 65_536
-        || samples.iter().any(|value| !value.is_finite())
+fn begin_native_recording(app: &AppHandle, path: PathBuf, test: bool) -> Result<(), String> {
+    #[cfg(windows)]
     {
-        return Err("WAKE_SAMPLE_FORMAT_INVALID".into());
+        let runtime = app.state::<WakeWordSetupRuntime>();
+        let mut capture = runtime
+            .capture
+            .lock()
+            .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?;
+        if capture.is_some() {
+            return Err("WAKE_SAMPLE_ALREADY_RECORDING".into());
+        }
+        *runtime.test_result.lock().map_err(|_| "WAKE_TEST_FAILED")? = None;
+        let reference = if test {
+            Some(candidate_reference_path(app)?)
+        } else {
+            None
+        };
+        let (next, rate, identity) = crate::wake_setup_capture::Capture::start(reference)?;
+        let mut expected = runtime
+            .device_identity
+            .lock()
+            .map_err(|_| "WAKE_MIC_CONFIG_FAILED")?;
+        if expected.as_ref().is_some_and(|old| old != &identity) {
+            return Err("등록 중 마이크가 변경됐습니다. 목소리 등록을 다시 시작해 주세요.".into());
+        }
+        *expected = Some(identity);
+        begin_recording(app, path, rate)?;
+        *capture = Some(next);
+        Ok(())
     }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, path, test);
+        Err("WAKE_SETUP_UNSUPPORTED".into())
+    }
+}
+
+fn append_samples(app: &AppHandle, samples: &[f32]) -> Result<(), String> {
     let runtime = app.state::<WakeWordSetupRuntime>();
     let mut guard = runtime
         .recording
         .lock()
         .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?;
     let recording = guard.as_mut().ok_or("WAKE_SAMPLE_NOT_RECORDING")?;
-    for sample in samples {
+    for &sample in samples {
+        if !sample.is_finite() {
+            return Err("WAKE_SAMPLE_FORMAT_INVALID".into());
+        }
         let normalized = sample.clamp(-1.0, 1.0);
         recording.sum_squares += f64::from(normalized).powi(2);
         recording.peak = recording.peak.max(f64::from(normalized.abs()));
@@ -298,6 +343,24 @@ pub fn append_wake_word_sample(
         recording.samples += 1;
     }
     Ok(())
+}
+
+// 10ms energy windows with 120ms padding preserve quiet consonants. This is
+// endpoint trimming, not a claim that energy alone recognizes speech.
+fn speech_bounds(samples: &[f32], rate: u32) -> std::ops::Range<usize> {
+    let frame = (rate as usize / 100).max(1);
+    let energies: Vec<f32> = samples
+        .chunks(frame)
+        .map(|chunk| (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt())
+        .collect();
+    let peak = energies.iter().copied().fold(0.0_f32, f32::max);
+    let threshold = (peak * 0.08).max(0.003);
+    let Some(first) = energies.iter().position(|&rms| rms >= threshold) else {
+        return 0..samples.len();
+    };
+    let last = energies.iter().rposition(|&rms| rms >= threshold).unwrap();
+    let padding = rate as usize * 120 / 1000;
+    (first * frame).saturating_sub(padding)..((last + 1) * frame + padding).min(samples.len())
 }
 
 fn quality(recording: &SetupRecording) -> SampleQuality {
@@ -350,6 +413,60 @@ pub fn finish_wake_word_sample(
     window: tauri::WebviewWindow,
 ) -> Result<SampleQuality, String> {
     require_main(&window)?;
+    #[cfg(windows)]
+    {
+        let runtime = app.state::<WakeWordSetupRuntime>();
+        let capture = runtime
+            .capture
+            .lock()
+            .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?
+            .take()
+            .ok_or("WAKE_SAMPLE_NOT_RECORDING")?;
+        let captured = match capture.finish() {
+            Ok(captured) => captured,
+            Err(error) => {
+                *runtime
+                    .successful_tests
+                    .lock()
+                    .map_err(|_| "WAKE_TEST_FAILED")? = 0;
+                if let Some(recording) = runtime
+                    .recording
+                    .lock()
+                    .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?
+                    .take()
+                {
+                    let path = recording.path.clone();
+                    drop(recording);
+                    let _ = fs::remove_file(path);
+                }
+                return Err(error);
+            }
+        };
+        let (rate, test) = {
+            let guard = runtime
+                .recording
+                .lock()
+                .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?;
+            let recording = guard.as_ref().ok_or("WAKE_SAMPLE_NOT_RECORDING")?;
+            (
+                recording.sample_rate,
+                recording
+                    .path
+                    .file_name()
+                    .is_some_and(|name| name == "test.wav"),
+            )
+        };
+        let bounds = speech_bounds(&captured.samples, rate);
+        crate::wake_word::wake_log(format!(
+            "setup endpoints: raw_samples={}, retained_samples={}, live_test={test}",
+            captured.samples.len(),
+            bounds.len()
+        ));
+        append_samples(&app, &captured.samples[bounds])?;
+        if test {
+            *runtime.test_result.lock().map_err(|_| "WAKE_TEST_FAILED")? = Some(captured.detected);
+        }
+    }
     let mut recording = app
         .state::<WakeWordSetupRuntime>()
         .recording
@@ -370,12 +487,14 @@ pub fn finish_wake_word_sample(
     if let Err(error) = crate::wake_diagnostics::retain_sample(&app, &recording.path) {
         crate::wake_word::wake_log(format!("diagnostic sample retention failed: {error}"));
     }
-    #[cfg(all(windows, debug_assertions))]
-    if let Err(error) = crate::wake_diagnostics::retain_sample(&app, &recording.path) {
-        crate::wake_word::wake_log(format!("diagnostic sample retention failed: {error}"));
-    }
     if !result.accepted {
         let _ = fs::remove_file(recording.path);
+        let runtime = app.state::<WakeWordSetupRuntime>();
+        *runtime.test_result.lock().map_err(|_| "WAKE_TEST_FAILED")? = None;
+        *runtime
+            .successful_tests
+            .lock()
+            .map_err(|_| "WAKE_TEST_FAILED")? = 0;
     }
     #[cfg(windows)]
     crate::wake_word::wake_log(format!(
@@ -396,6 +515,14 @@ pub fn generate_wake_word_reference(
     window: tauri::WebviewWindow,
 ) -> Result<SetupProgress, String> {
     require_main(&window)?;
+    *app.state::<WakeWordSetupRuntime>()
+        .successful_tests
+        .lock()
+        .map_err(|_| "WAKE_TEST_FAILED")? = 0;
+    *app.state::<WakeWordSetupRuntime>()
+        .test_result
+        .lock()
+        .map_err(|_| "WAKE_TEST_FAILED")? = None;
     let samples = sample_paths(&app)?;
     if samples.len() != SAMPLE_TOTAL {
         return Err("WAKE_SETUP_SAMPLES_INCOMPLETE".into());
@@ -438,63 +565,25 @@ pub fn test_wake_word_reference(
     window: tauri::WebviewWindow,
 ) -> Result<bool, String> {
     require_main(&window)?;
-    let test_path = staging_dir(&app)?.join("test.wav");
-    if !test_path.is_file() {
-        return Err("WAKE_TEST_NOT_READY".into());
+    let runtime = app.state::<WakeWordSetupRuntime>();
+    let detected = runtime
+        .test_result
+        .lock()
+        .map_err(|_| "WAKE_TEST_FAILED")?
+        .take()
+        .ok_or("WAKE_TEST_NOT_READY")?;
+    let mut passes = runtime
+        .successful_tests
+        .lock()
+        .map_err(|_| "WAKE_TEST_FAILED")?;
+    if detected {
+        *passes += 1;
+    } else {
+        *passes = 0;
     }
     #[cfg(windows)]
-    {
-        use rustpotter::WakewordLoad;
-        let mut reader = hound::WavReader::open(test_path).map_err(|_| "WAKE_TEST_FAILED")?;
-        let spec = reader.spec();
-        let mut config = rustpotter::RustpotterConfig::default();
-        config.fmt.sample_rate = spec.sample_rate as usize;
-        config.fmt.channels = spec.channels;
-        config.fmt.sample_format = rustpotter::SampleFormat::I16;
-        config.filters.gain_normalizer.enabled = true;
-        config.detector.threshold = 0.52;
-        config.detector.avg_threshold = 0.22;
-        config.detector.min_scores = 2;
-        config.detector.eager = false;
-        let mut detector = rustpotter::Rustpotter::new(&config).map_err(|_| "WAKE_TEST_FAILED")?;
-        let reference = rustpotter::WakewordRef::load_from_file(
-            &candidate_reference_path(&app)?.to_string_lossy(),
-        )
-        .map_err(|_| "WAKE_TEST_FAILED")?;
-        let model = reference_metadata(&candidate_reference_path(&app)?)?;
-        crate::wake_word::wake_log(format!(
-            "onboarding test started: model_id={}, references={}, input_sample_rate={}, input_channels={}, input_format=I16, threshold={:.2}, avg_threshold={:.2}, min_scores={}, eager={}",
-            model.id,
-            model.reference_count,
-            spec.sample_rate,
-            spec.channels,
-            config.detector.threshold,
-            config.detector.avg_threshold,
-            config.detector.min_scores,
-            config.detector.eager,
-        ));
-        detector
-            .add_wakeword_ref("ACE", reference)
-            .map_err(|_| "WAKE_TEST_FAILED")?;
-        let frame = detector.get_samples_per_frame();
-        let mut samples = reader
-            .samples::<i16>()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| "WAKE_TEST_FAILED")?;
-        samples.extend(std::iter::repeat_n(0, spec.sample_rate as usize * 3));
-        let detected = samples
-            .chunks_exact(frame)
-            .any(|chunk| detector.process_samples(chunk.to_vec()).is_some());
-        crate::wake_word::wake_log(format!(
-            "onboarding test completed: model_id={}, detected={detected}, final_rms={:.6}, final_gain={:.4}",
-            model.id,
-            detector.get_rms_level(),
-            detector.get_gain(),
-        ));
-        Ok(detected)
-    }
-    #[cfg(not(windows))]
-    Err("WAKE_SETUP_UNSUPPORTED".into())
+    crate::wake_word::wake_log(format!("native live onboarding test: detected={detected}, consecutive_passes={passes}, required=2; no synthetic silence"));
+    Ok(detected)
 }
 
 #[tauri::command]
@@ -503,6 +592,15 @@ pub fn complete_wake_word_setup(
     window: tauri::WebviewWindow,
 ) -> Result<VoiceActivationSettings, String> {
     require_main(&window)?;
+    if *app
+        .state::<WakeWordSetupRuntime>()
+        .successful_tests
+        .lock()
+        .map_err(|_| "WAKE_TEST_FAILED")?
+        < 2
+    {
+        return Err("WAKE_LIVE_TEST_REQUIRED".into());
+    }
     let candidate = candidate_reference_path(&app)?;
     if !validate_reference_file(&candidate) {
         return Err("WAKE_REFERENCE_INVALID".into());
@@ -550,6 +648,7 @@ pub fn complete_wake_word_setup(
         enabled: true,
         setup_completed: true,
         reference_exists: true,
+        sensitivity: WakeSensitivity::Standard,
     };
     save_settings(&app, &settings)?;
     let _ = fs::remove_dir_all(staging_dir(&app)?);
@@ -563,6 +662,25 @@ pub fn postpone_wake_word_setup(
     window: tauri::WebviewWindow,
 ) -> Result<VoiceActivationSettings, String> {
     require_main(&window)?;
+    #[cfg(windows)]
+    {
+        let capture = app
+            .state::<WakeWordSetupRuntime>()
+            .capture
+            .lock()
+            .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?
+            .take();
+        drop(capture);
+    }
+    if let Some(recording) = app
+        .state::<WakeWordSetupRuntime>()
+        .recording
+        .lock()
+        .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?
+        .take()
+    {
+        drop(recording);
+    }
     let active = active_reference_path(&app)?;
     let candidate = candidate_reference_path(&app)?;
     let had_active_reference = validate_reference_file(&active);
@@ -573,6 +691,7 @@ pub fn postpone_wake_word_setup(
         enabled: false,
         setup_completed: had_active_reference,
         reference_exists: validate_reference_file(&active),
+        sensitivity: load_settings(&app).sensitivity,
     };
     save_settings(&app, &settings)?;
     let _ = fs::remove_dir_all(staging_dir(&app)?);
@@ -580,6 +699,25 @@ pub fn postpone_wake_word_setup(
 }
 
 fn cancel_setup_files(app: &AppHandle) -> Result<(), String> {
+    let runtime = app.state::<WakeWordSetupRuntime>();
+    #[cfg(windows)]
+    {
+        let capture = runtime
+            .capture
+            .lock()
+            .map_err(|_| "WAKE_SAMPLE_RECORDING_FAILED")?
+            .take();
+        drop(capture);
+    }
+    *runtime
+        .device_identity
+        .lock()
+        .map_err(|_| "WAKE_MIC_CONFIG_FAILED")? = None;
+    *runtime.test_result.lock().map_err(|_| "WAKE_TEST_FAILED")? = None;
+    *runtime
+        .successful_tests
+        .lock()
+        .map_err(|_| "WAKE_TEST_FAILED")? = 0;
     if let Ok(mut guard) = app.state::<WakeWordSetupRuntime>().recording.lock() {
         if let Some(recording) = guard.take() {
             drop(recording.writer);
@@ -613,14 +751,118 @@ pub fn set_persisted_enabled(
     Ok(settings)
 }
 
+#[tauri::command]
+pub async fn set_wake_word_sensitivity(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    sensitivity: WakeSensitivity,
+) -> Result<VoiceActivationSettings, String> {
+    require_main(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        static UPDATE: Mutex<()> = Mutex::new(());
+        let _guard = UPDATE.lock().map_err(|_| "WAKE_SETUP_STORAGE_FAILED")?;
+        if crate::voice_overlay::is_active(&app) || staging_dir(&app)?.exists() {
+            return Err("녹음 또는 목소리 등록을 마친 뒤 감도를 변경해 주세요.".into());
+        }
+        #[cfg(all(windows, debug_assertions))]
+        if crate::wake_diagnostics::busy() {
+            return Err("진단 녹음을 마친 뒤 감도를 변경해 주세요.".into());
+        }
+        let previous = load_settings(&app);
+        if !previous.setup_completed || !previous.reference_exists {
+            return Err("먼저 목소리를 등록해 주세요.".into());
+        }
+        let mut next = previous.clone();
+        next.sensitivity = sensitivity;
+        save_settings(&app, &next)?;
+        crate::wake_word::stop(&app);
+        if let Err(error) = crate::wake_word::restore_persisted(&app) {
+            save_settings(&app, &previous)?;
+            let _ = crate::wake_word::restore_persisted(&app);
+            return Err(error);
+        }
+        Ok(next)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn endpoint_trimming_removes_button_delay_and_keeps_padding() {
+        let rate = 48_000;
+        let mut input = vec![0.0001; rate * 3];
+        input[rate..rate + rate / 2].fill(0.1);
+        let bounds = speech_bounds(&input, rate as u32);
+        assert_eq!(bounds, 42_240..77_760);
+        assert!(input[bounds].contains(&0.1));
+    }
+
+    #[test]
+    fn endpoint_trimming_preserves_quiet_edges_and_silence_is_still_rejected() {
+        let mut input = vec![0.0; 16_000];
+        input[3_200..11_200].fill(0.05);
+        input[2_560..3_200].fill(0.002);
+        let bounds = speech_bounds(&input, 16_000);
+        assert!(bounds.start <= 2_560 && bounds.end >= 11_200);
+        let silence = vec![0.0; 16_000];
+        assert_eq!(speech_bounds(&silence, 16_000), 0..16_000);
+        assert!(!quality_for(&silence, 16_000).accepted);
+        assert_eq!(speech_bounds(&[], 48_000), 0..0);
+    }
+
+    #[test]
+    fn old_settings_keep_the_existing_model_policy() {
+        let settings: VoiceActivationSettings = serde_json::from_str(
+            r#"{"enabled":true,"setupCompleted":true,"referenceExists":true}"#,
+        )
+        .unwrap();
+        assert!(settings.enabled && settings.setup_completed && settings.reference_exists);
+        assert_eq!(settings.sensitivity, WakeSensitivity::Standard);
+        assert!(serde_json::from_str::<WakeSensitivity>(r#""unrestricted""#).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn personal_sensitivity_changes_only_the_effective_reference_gate() {
+        use rustpotter::{WakewordLoad, WakewordSave};
+        let original = rustpotter::WakewordRef {
+            name: "ACE".into(),
+            threshold: Some(0.52),
+            avg_threshold: Some(0.22),
+            avg_features: Some(vec![vec![1.0; 13]; 4]),
+            samples_features: [("sample".into(), vec![vec![1.0; 13]; 4])].into(),
+            rms_level: 0.02,
+            mfcc_size: 13,
+        };
+        let bytes = original.save_to_buffer().unwrap();
+        let mut effective = rustpotter::WakewordRef::load_from_buffer(&bytes).unwrap();
+        WakeSensitivity::Sensitive.apply(&mut effective);
+        // The serialized effective reference is also what diagnostic replay loads.
+        let replay =
+            rustpotter::WakewordRef::load_from_buffer(&effective.save_to_buffer().unwrap())
+                .unwrap();
+        assert_eq!(replay.threshold, Some(0.48));
+        assert_eq!(replay.avg_threshold, original.avg_threshold);
+        assert_eq!(replay.samples_features, original.samples_features);
+        assert_eq!(replay.avg_features, original.avg_features);
+        let mut restored = rustpotter::WakewordRef::load_from_buffer(&bytes).unwrap();
+        WakeSensitivity::Standard.apply(&mut restored);
+        assert_eq!(restored.threshold, Some(0.52));
+        restored.threshold = Some(0.44);
+        WakeSensitivity::Sensitive.apply(&mut restored);
+        assert_eq!(restored.threshold, Some(0.44));
+    }
+
     fn quality_for(samples: &[f32], rate: u32) -> SampleQuality {
+        let path =
+            std::env::temp_dir().join(format!("ace-wake-quality-{}.wav", uuid::Uuid::new_v4()));
         let mut recording = SetupRecording {
             writer: hound::WavWriter::create(
-                std::env::temp_dir().join("ace-wake-quality-test.wav"),
+                &path,
                 hound::WavSpec {
                     channels: 1,
                     sample_rate: rate,
@@ -643,7 +885,10 @@ mod tests {
             recording.clipped += u64::from(sample.abs() >= 0.99);
             recording.voiced += u64::from(sample.abs() >= SILENCE_AMPLITUDE);
         }
-        quality(&recording)
+        let result = quality(&recording);
+        drop(recording);
+        let _ = fs::remove_file(path);
+        result
     }
 
     #[test]
@@ -670,7 +915,8 @@ mod tests {
             serde_json::json!({
                 "enabled": false,
                 "setupCompleted": false,
-                "referenceExists": false
+                "referenceExists": false,
+                "sensitivity": "standard"
             })
         );
     }
