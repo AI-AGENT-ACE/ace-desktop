@@ -58,7 +58,27 @@ import './styles/globals.css';
 import './styles/motion.css';
 
 type Action = { status: SystemActionStatus; message: string };
-type PendingAction = { request?: SystemActionRequest; call?: ToolCall; voice: boolean };
+type PendingAction = {
+  request?: SystemActionRequest;
+  call?: ToolCall;
+  voice: boolean;
+  voiceRequestId?: string;
+};
+type VoiceChoice = { id: string; label: string };
+const reportVoice = (
+  item: PendingAction,
+  status: string,
+  message: string,
+  choices?: VoiceChoice[],
+) =>
+  item.voiceRequestId
+    ? invoke('report_voice_tool_result', {
+        requestId: item.voiceRequestId,
+        status,
+        message,
+        choices: choices ?? [],
+      })
+    : Promise.resolve();
 function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const conversations = useConversations();
   const [active, setActive] = useState<string | null>(null);
@@ -99,6 +119,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const executionLock = useRef(false);
   const mounted = useRef(true);
   const voiceLock = useRef(false);
+  const voiceChoiceHandler = useRef<(id: string, choice: string) => void>(() => {});
+  const voiceSearchChoices = useRef(
+    new Map<string, { id: string; label: string; request: SystemActionRequest }[]>(),
+  );
+  const cancelledVoice = useRef(new Set<string>());
   useEffect(() => {
     mounted.current = true;
     const controller = new AbortController();
@@ -147,10 +172,21 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     void register<string>('ace-voice-command', (payload) => {
       if (typeof payload === 'string' && payload.length <= 200) void runVoice(payload.trim());
     });
-    void register<{ tool: string; arguments: Record<string, unknown> }>(
+    void register<{ tool: string; arguments: Record<string, unknown>; requestId: string }>(
       'ace-voice-tool-call',
       (payload) => {
-        if (!payload || typeof payload.tool !== 'string' || !payload.arguments) return;
+        if (
+          !payload ||
+          typeof payload.tool !== 'string' ||
+          !payload.arguments ||
+          typeof payload.requestId !== 'string'
+        )
+          return;
+        void reportVoice(
+          { voice: true, voiceRequestId: payload.requestId },
+          'EXECUTING',
+          '요청을 확인하고 있어요.',
+        );
         const riskLevel = localPolicy(payload.tool);
         setPending((previous) => [
           ...previous,
@@ -163,10 +199,21 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
               label: payload.tool,
             },
             voice: true,
+            voiceRequestId: payload.requestId,
           },
         ]);
       },
     );
+    void register<{ requestId: string; choiceId: string }>('ace-voice-choice', (payload) =>
+      voiceChoiceHandler.current(payload.requestId, payload.choiceId),
+    );
+    void register<string>('ace-voice-request-cancelled', (id) => {
+      cancelledVoice.current.add(id);
+      if (cancelledVoice.current.size > 100)
+        cancelledVoice.current.delete(cancelledVoice.current.values().next().value!);
+      voiceSearchChoices.current.delete(id);
+      setPending((previous) => previous.filter((item) => item.voiceRequestId !== id));
+    });
     void register<boolean>('ace-wake-word-changed', (enabled) => {
       if (typeof enabled === 'boolean') setWake(enabled);
     });
@@ -347,11 +394,15 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   };
   const execute = async (item: PendingAction, approved: boolean) => {
     if (executionLock.current) return;
+    if (item.voiceRequestId && cancelledVoice.current.has(item.voiceRequestId)) return;
     executionLock.current = true;
     const start = performance.now();
     const request = item.request || (item.call ? toolRequest(item.call) : null);
+    let reply: { status: string; message: string; choices?: VoiceChoice[] } | null = null;
     setAction({ status: 'pending', message: '명령 처리 중…' });
     try {
+      await reportVoice(item, 'EXECUTING', '실행 중이에요.');
+      if (item.voiceRequestId && cancelledVoice.current.has(item.voiceRequestId)) return;
       if (item.call?.executionLocation === 'CLOUD') {
         if (!approved) {
           setAction({ status: 'error', message: '도구 실행을 취소했습니다.' });
@@ -368,9 +419,54 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
         const result = approved
           ? await systemAdapter.execute(request, true)
           : { success: false, errorCode: 'CANCELLED' };
+        if (item.voiceRequestId && cancelledVoice.current.has(item.voiceRequestId)) return;
+        if (
+          item.voiceRequestId &&
+          result.success &&
+          ['file.search', 'folder.search'].includes(request.commandType)
+        ) {
+          const values = (result.data?.results ?? []) as {
+            resourceId?: string;
+            displayName?: string;
+          }[];
+          const choices = values
+            .filter(
+              (value) =>
+                typeof value.resourceId === 'string' && typeof value.displayName === 'string',
+            )
+            .slice(0, 3)
+            .map((value, index) => ({
+              id: String(index + 1),
+              label: `${Array.from(value.displayName!).slice(0, 120).join('')} 열기`,
+              request: {
+                commandType: request.commandType === 'file.search' ? 'file.open' : 'folder.open',
+                arguments: { resourceId: value.resourceId },
+                riskLevel: 'SAFE' as const,
+                label: `${value.displayName} 열기`,
+              },
+            }));
+          if (choices.length) {
+            voiceSearchChoices.current.set(item.voiceRequestId, choices);
+            reply = {
+              status: 'WAITING_CONFIRMATION',
+              message: '열 대상을 번호로 말하거나 눌러 주세요. 아니오라고 하면 취소해요.',
+              choices,
+            };
+          } else reply = { status: 'ERROR', message: '일치하는 대상을 찾지 못했어요.' };
+        } else {
+          reply = {
+            status: approved && !result.success ? 'ERROR' : 'SUCCESS',
+            message: !approved
+              ? '작업을 취소했어요.'
+              : result.message ||
+                (result.success
+                  ? '작업을 완료했어요.'
+                  : '작업을 완료하지 못했어요. 다시 말씀해 주세요.'),
+          };
+        }
         const duration = Math.round(performance.now() - start);
         if (item.voice)
-          await logVoice(
+          void logVoice(
             request,
             !approved ? 'CANCELLED' : result.success ? 'SUCCESS' : 'FAILED',
             duration,
@@ -402,18 +498,18 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
         });
       }
     } catch (cause) {
+      reply = { status: 'ERROR', message: apiErrorMessage(cause) };
       if (item.voice && request)
-        await logVoice(
-          request,
-          'FAILED',
-          Math.round(performance.now() - start),
-          'EXECUTION_FAILED',
-        );
+        void logVoice(request, 'FAILED', Math.round(performance.now() - start), 'EXECUTION_FAILED');
       setAction({ status: 'error', message: apiErrorMessage(cause) });
     } finally {
       executionLock.current = false;
       if (mounted.current)
         setPending((previous) => previous.filter((candidate) => candidate !== item));
+      if (reply)
+        await reportVoice(item, reply.status, reply.message, reply.choices).catch((cause) =>
+          setNotice(apiErrorMessage(cause)),
+        );
     }
   };
   const runVoice = async (text: string) => {
@@ -439,14 +535,49 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     !current?.call?.denied &&
     risk !== 'BLOCKED' &&
     (risk === 'CONFIRM' || current?.call?.requiresConfirmation);
+  voiceChoiceHandler.current = (id, choice) => {
+    if (cancelledVoice.current.has(id) || executionLock.current) return;
+    const search = voiceSearchChoices.current.get(id);
+    if (search) {
+      if (choice === 'cancel') {
+        voiceSearchChoices.current.delete(id);
+        void reportVoice({ voice: true, voiceRequestId: id }, 'SUCCESS', '선택을 취소했어요.');
+        return;
+      }
+      const selected = search.find((value) => value.id === choice);
+      if (!selected) return;
+      voiceSearchChoices.current.delete(id);
+      setPending((previous) => [
+        ...previous,
+        { voice: true, voiceRequestId: id, request: selected.request },
+      ]);
+    } else if (
+      current?.voiceRequestId === id &&
+      needsConfirmation &&
+      ['yes', 'no'].includes(choice)
+    ) {
+      void execute(current, choice === 'yes');
+    }
+  };
   useEffect(() => {
     if (!current) return;
     if (current.call?.denied) {
+      void reportVoice(current, 'ERROR', '설정에서 허용하지 않은 기능입니다.');
       setAction({ status: 'error', message: '설정에서 허용하지 않은 기능입니다.' });
       setPending((previous) => previous.filter((candidate) => candidate !== current));
       return;
     }
     if (!needsConfirmation) void execute(current, risk !== 'BLOCKED');
+    else
+      void reportVoice(
+        current,
+        'WAITING_CONFIRMATION',
+        `${current.request?.label || current.call?.tool} 작업을 실행할까요?`,
+        [
+          { id: 'yes', label: '네, 실행' },
+          { id: 'no', label: '아니오, 취소' },
+        ],
+      );
   }, [current, needsConfirmation, risk]);
   const openVoice = async () => {
     if (isTauri()) {

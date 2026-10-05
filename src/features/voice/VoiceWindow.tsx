@@ -3,34 +3,29 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { AnimatePresence, useMotionValue } from 'motion/react';
 import { VoiceOverlay } from './VoiceOverlay';
+import type { OrbVisualState } from './orbMotion';
 import { apiBaseUrl, apiErrorMessage } from '../../api/client';
 import { requestVoiceAccessToken } from '../../api/voice-session';
 import { RecordingEndpoint } from './recording-endpoint';
+import {
+  playWakeChime,
+  resolveVoiceChoice,
+  RETRY_LISTEN_MS,
+  SUCCESS_CLOSE_MS,
+  type VoiceChoice,
+} from './voice-session-policy';
 import '../../styles/globals.css';
-const localPortfolioMode = import.meta.env.VITE_VOICE_MODE === 'local-portfolio';
 
-type RecordingResult = {
-  recordingId: string;
-  state: 'READY';
-  sampleRate: number;
-  channels: number;
-  samplesWritten: number;
-  durationMs: number;
+const localPortfolioMode = import.meta.env.VITE_VOICE_MODE === 'local-portfolio';
+type CaptureMode = 'command' | 'retry' | 'confirmation';
+type RecordingResult = { recordingId: string };
+type ToolResult = {
+  requestId: string;
+  status: 'EXECUTING' | 'SUCCESS' | 'ERROR' | 'WAITING_CONFIRMATION';
+  message: string;
+  choices: VoiceChoice[];
 };
-type VoicePhase =
-  | 'IDLE'
-  | 'LISTENING'
-  | 'RECORDING'
-  | 'FINALIZING'
-  | 'READY'
-  | 'UPLOADING'
-  | 'PROCESSING'
-  | 'EXECUTING'
-  | 'SUCCESS'
-  | 'ERROR';
 type UploadResult = {
-  recordingId: string;
-  state: 'SUCCESS';
   result: {
     transcript?: string;
     content?: string;
@@ -39,336 +34,417 @@ type UploadResult = {
     arguments?: Record<string, unknown>;
   };
 };
-const voiceErrors: Record<string, string> = {
-  RECORDING_FAILED: '음성 녹음 중 문제가 발생했습니다.',
-  WAV_FINALIZE_FAILED: '음성 녹음 중 문제가 발생했습니다.',
-  VOICE_RECORDING_EMPTY: '음성을 인식하지 못했습니다.',
-  VOICE_RECORDING_TOO_SHORT: '음성을 인식하지 못했습니다.',
-  VOICE_UPLOAD_FAILED: '음성을 인식하는 중 문제가 발생했습니다.',
-  VOICE_PROCESSING_FAILED: '음성을 인식하는 중 문제가 발생했습니다.',
-  VOICE_TIMEOUT: '음성을 인식하는 중 문제가 발생했습니다.',
-  VOICE_FILE_INVALID: '음성을 인식하지 못했습니다.',
-  DUPLICATE_VOICE_SESSION: '이미 음성 요청을 처리하고 있습니다.',
-  UNAUTHENTICATED: '로그인이 만료되었습니다. 메인 창에서 다시 로그인해 주세요.',
-  AI_SERVER_UNAVAILABLE:
-    '음성 AI 서버가 연결되지 않았습니다. 백엔드의 AI_SERVER_URL 설정을 확인해 주세요.',
-  LOCAL_STT_NOT_INSTALLED: '로컬 음성 인식 모델을 설치해 주세요.',
-  LOCAL_STT_FAILED: '로컬 음성 인식에 실패했습니다. 다시 말해 주세요.',
-};
 const voiceErrorMessage = (cause: unknown) => {
   const raw = typeof cause === 'string' ? cause : cause instanceof Error ? cause.message : '';
-  return voiceErrors[raw] || apiErrorMessage(cause);
+  const errors: Record<string, string> = {
+    VOICE_RECORDING_EMPTY: '음성을 듣지 못했어요. 다시 말씀해 주세요.',
+    VOICE_RECORDING_TOO_SHORT: '말씀을 끝까지 듣지 못했어요. 다시 말씀해 주세요.',
+    UNAUTHENTICATED: '메인 창에서 다시 로그인해 주세요.',
+    AI_SERVER_UNAVAILABLE: '음성 AI 서버가 연결되지 않았어요.',
+    LOCAL_STT_NOT_INSTALLED: '로컬 음성 인식 모델을 설치해 주세요.',
+    LOCAL_STT_FAILED: '음성을 인식하지 못했어요. 다시 말씀해 주세요.',
+  };
+  return errors[raw] || apiErrorMessage(cause);
 };
 
 export function VoiceWindow() {
   const [text, setText] = useState('');
-  const [error, setError] = useState('');
+  const [visualState, setVisualState] = useState<OrbVisualState>('IDLE');
   const [recording, setRecording] = useState(false);
-  const [phase, setPhase] = useState<VoicePhase>('IDLE');
-  const [visible, setVisible] = useState(true);
+  const [visible, setVisible] = useState(false);
+  const [activation, setActivation] = useState(0);
+  const [choices, setChoices] = useState<VoiceChoice[]>([]);
   const audioLevel = useMotionValue(0);
-  const smoothedLevel = useRef(0);
-  const microphone = useRef<MediaStream | null>(null);
-  const audioContext = useRef<AudioContext | null>(null);
-  const audioSource = useRef<MediaStreamAudioSourceNode | null>(null);
-  const audioProcessor = useRef<ScriptProcessorNode | null>(null);
-  const silentGain = useRef<GainNode | null>(null);
+  const open = useRef(false);
+  const generation = useRef(0);
+  const audio = useRef<{
+    stream: MediaStream;
+    context: AudioContext;
+    source: MediaStreamAudioSourceNode;
+    processor: ScriptProcessorNode;
+    gain: GainNode;
+  } | null>(null);
   const writeQueue = useRef<Promise<void>>(Promise.resolve());
+  const writeFailure = useRef<unknown>(null);
   const recordingActive = useRef(false);
   const finalizing = useRef(false);
-  const writeFailure = useRef<unknown>(null);
-  const microphoneGeneration = useRef(0);
-  const speechDetected = useRef(false);
+  const finishRef = useRef<() => Promise<void>>(async () => {});
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingId = useRef<string | null>(null);
+  const currentChoices = useRef<VoiceChoice[]>([]);
+  const retryMode = useRef<CaptureMode | null>(null);
+  const mounted = useRef(true);
 
+  const valid = (token: number) => mounted.current && open.current && generation.current === token;
+  const clearTimer = () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  const updateChoices = (next: VoiceChoice[]) => {
+    currentChoices.current = next;
+    setChoices(next);
+  };
   const releaseAudio = async () => {
-    microphoneGeneration.current += 1;
-    if (audioProcessor.current) {
-      audioProcessor.current.onaudioprocess = null;
-      audioProcessor.current.disconnect();
-    }
-    audioSource.current?.disconnect();
-    silentGain.current?.disconnect();
-    const context = audioContext.current;
-    microphone.current?.getTracks().forEach((track) => track.stop());
-    audioProcessor.current = null;
-    audioSource.current = null;
-    silentGain.current = null;
-    audioContext.current = null;
-    microphone.current = null;
-    smoothedLevel.current = 0;
+    const current = audio.current;
+    audio.current = null;
+    recordingActive.current = false;
+    setRecording(false);
     audioLevel.set(0);
-    if (context) await context.close().catch(() => undefined);
+    if (!current) return;
+    current.processor.onaudioprocess = null;
+    current.processor.disconnect();
+    current.source.disconnect();
+    current.gain.disconnect();
+    current.stream.getTracks().forEach((track) => track.stop());
+    await current.context.close().catch(() => undefined);
   };
-
-  const voiceLog = (message: string, detail?: unknown) => {
-    if (import.meta.env.DEV) console.debug(`[Voice] ${message}`, detail ?? '');
+  const close = async () => {
+    open.current = false;
+    generation.current += 1;
+    clearTimer();
+    retryMode.current = null;
+    pendingId.current = null;
+    updateChoices([]);
+    setVisible(false);
+    await releaseAudio();
+    await writeQueue.current.catch(() => undefined);
+    await invoke('hide_voice_overlay').catch(() => undefined);
   };
-
-  const stopAndSave = async () => {
-    if (!recordingActive.current || finalizing.current) return null;
-    finalizing.current = true;
-    recordingActive.current = false;
-    setRecording(false);
-    setPhase('FINALIZING');
-    voiceLog('stop requested');
+  const showSuccess = (message: string) => {
+    clearTimer();
+    retryMode.current = null;
+    updateChoices([]);
+    setText(message);
+    setVisualState('SUCCESS');
+    const token = generation.current;
+    timer.current = setTimeout(() => {
+      if (valid(token)) void close();
+    }, SUCCESS_CLOSE_MS);
+  };
+  const startRetryIfReady = () => {
+    const next = retryMode.current;
+    if (!next || finalizing.current || !open.current) return;
+    retryMode.current = null;
+    void startCapture(next);
+  };
+  const retry = (message: string, mode: CaptureMode = 'retry') => {
+    clearTimer();
+    setText(message);
+    setVisualState(mode === 'confirmation' ? 'WAITING_CONFIRMATION' : 'LISTENING');
+    retryMode.current = mode;
+    startRetryIfReady();
+  };
+  const choose = async (choiceId: string) => {
+    const id = pendingId.current;
+    if (!id || !currentChoices.current.length) return;
+    generation.current += 1;
+    retryMode.current = null;
+    updateChoices([]);
+    const token = generation.current;
+    await releaseAudio();
+    await writeQueue.current.catch(() => undefined);
+    if (!valid(token) || pendingId.current !== id) return;
+    await invoke('cancel_voice_recording').catch(() => undefined);
+    if (!valid(token) || pendingId.current !== id) return;
+    setText('선택을 전달하고 있어요.');
+    setVisualState('EXECUTING');
     try {
-      await releaseAudio();
-      voiceLog('recording finalizing');
-      await writeQueue.current;
-      if (writeFailure.current) {
-        voiceLog('PCM write failed', writeFailure.current);
-        await invoke('cancel_voice_recording').catch(() => undefined);
-        throw new Error('RECORDING_FAILED');
+      await invoke('respond_voice_choice', { requestId: id, choiceId });
+    } catch (cause) {
+      if (open.current) {
+        pendingId.current = null;
+        await invoke('cancel_voice_request').catch(() => undefined);
+        retry(voiceErrorMessage(cause));
       }
-      const result = await invoke<RecordingResult>('stop_voice_recording');
-      voiceLog('recording finalized', {
-        samples: result.samplesWritten,
-        durationMs: result.durationMs,
-      });
-      setPhase('READY');
-      if (localPortfolioMode) {
-        if (!speechDetected.current) {
-          await invoke('discard_voice_recording', { recordingId: result.recordingId });
-          throw new Error('VOICE_RECORDING_EMPTY');
-        }
-        setPhase('PROCESSING');
-        const generation = microphoneGeneration.current;
-        const recognized = await invoke<{ transcript: string; portfolioRequested: boolean }>(
-          'transcribe_local_portfolio',
-          { recordingId: result.recordingId },
-        );
-        if (generation !== microphoneGeneration.current) return result;
-        setText(recognized.transcript);
-        if (!recognized.portfolioRequested) {
-          throw new Error(
-            recognized.transcript
-              ? `“${recognized.transcript}”로 들었어요. “바탕화면에서 포트폴리오 열어줘”라고 말해 주세요.`
-              : '음성을 인식하지 못했습니다. 다시 말해 주세요.',
-          );
-        }
-        setPhase('EXECUTING');
-        await invoke('submit_voice_tool_call', {
-          tool: 'file.open',
-          arguments: { directory: 'desktop', path: '김환성_포트폴리오.pdf' },
-        });
-        setVisible(false);
-        setPhase('IDLE');
-        return result;
-      }
-      const accessToken = await requestVoiceAccessToken().catch(async (cause) => {
-        await invoke('discard_voice_recording', { recordingId: result.recordingId });
-        throw cause;
-      });
-      setPhase('UPLOADING');
-      voiceLog('transcription started');
-      const processingTimer = window.setTimeout(() => setPhase('PROCESSING'), 500);
-      const uploaded = await invoke<UploadResult>('upload_voice_recording', {
-        recordingId: result.recordingId,
-        apiBaseUrl,
-        accessToken,
-        conversationId: null,
-      }).finally(() => window.clearTimeout(processingTimer));
-      if (uploaded.result.transcript || uploaded.result.content)
-        setText(uploaded.result.transcript || uploaded.result.content || '');
-      if (
-        uploaded.result.type === 'tool_call' &&
-        uploaded.result.tool &&
-        uploaded.result.arguments
-      ) {
-        setPhase('EXECUTING');
-        await new Promise((resolve) => window.setTimeout(resolve, 420));
-        setPhase('SUCCESS');
-        await new Promise((resolve) => window.setTimeout(resolve, 450));
-        setVisible(false);
-        await new Promise((resolve) => window.setTimeout(resolve, 200));
-        await invoke('submit_voice_tool_call', {
-          tool: uploaded.result.tool,
-          arguments: uploaded.result.arguments,
-        });
-      } else {
-        setPhase('SUCCESS');
-        await new Promise((resolve) => window.setTimeout(resolve, 650));
-        setVisible(false);
-        await new Promise((resolve) => window.setTimeout(resolve, 200));
-        await invoke('hide_voice_overlay');
-      }
-      return result;
-    } finally {
-      finalizing.current = false;
     }
   };
-
-  const cancelTemporary = async () => {
-    await releaseAudio();
-    await writeQueue.current;
-    if (!recordingActive.current) return;
-    recordingActive.current = false;
-    setRecording(false);
-    setPhase('IDLE');
-    await invoke('cancel_voice_recording');
-  };
-
-  const startMicrophone = async () => {
-    await releaseAudio();
-    const generation = microphoneGeneration.current;
-    setRecording(false);
-    setPhase('LISTENING');
+  const submit = async (tool: string, args: Record<string, unknown>) => {
+    const requestId = crypto.randomUUID();
+    pendingId.current = requestId;
+    setVisualState('EXECUTING');
+    setText('요청을 전달하고 있어요.');
+    clearTimer();
+    const token = generation.current;
+    timer.current = setTimeout(() => {
+      if (!valid(token) || pendingId.current !== requestId) return;
+      pendingId.current = null;
+      void invoke('cancel_voice_request').catch(() => undefined);
+      setText('실행 응답을 확인하지 못했어요. 메인 창에서 결과를 확인해 주세요.');
+      setVisualState('ERROR');
+      timer.current = setTimeout(() => {
+        if (valid(token)) void close();
+      }, 5000);
+    }, 10000);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      await invoke('submit_voice_tool_call', { tool, arguments: args, requestId });
+    } catch (cause) {
+      clearTimer();
+      pendingId.current = null;
+      throw cause;
+    }
+  };
+  const startCapture = async (mode: CaptureMode) => {
+    const token = ++generation.current;
+    clearTimer();
+    await releaseAudio();
+    if (!valid(token)) return;
+    setVisualState(mode === 'confirmation' ? 'WAITING_CONFIRMATION' : 'LISTENING');
+    if (mode === 'command') setText('듣고 있어요. 말씀해 주세요.');
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
-      if (generation !== microphoneGeneration.current) {
+      if (!valid(token)) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
-
-      const context = new AudioContext();
+      context = new AudioContext();
+      await context.resume();
+      if (!valid(token)) {
+        stream.getTracks().forEach((track) => track.stop());
+        await context.close().catch(() => undefined);
+        return;
+      }
       const source = context.createMediaStreamSource(stream);
       const processor = context.createScriptProcessor(4096, 1, 1);
       const gain = context.createGain();
       gain.gain.value = 0;
+      audio.current = { stream, context, source, processor, gain };
       await invoke('start_voice_recording', {
         sampleRate: Math.round(context.sampleRate),
         channels: 1,
       });
-
-      microphone.current = stream;
-      audioContext.current = context;
-      audioSource.current = source;
-      audioProcessor.current = processor;
-      silentGain.current = gain;
+      if (!valid(token)) return;
       recordingActive.current = true;
+      setRecording(true);
       writeFailure.current = null;
       writeQueue.current = Promise.resolve();
-      setRecording(true);
-      setPhase('RECORDING');
-      const endpoint = new RecordingEndpoint();
-      speechDetected.current = false;
+      const endpoint = new RecordingEndpoint(
+        mode === 'command' ? 10000 : RETRY_LISTEN_MS,
+        mode === 'confirmation' ? 120 : 250,
+      );
+      let stopping = false;
+      const finish = async () => {
+        if (stopping || !valid(token) || !recordingActive.current) return;
+        stopping = true;
+        finalizing.current = true;
+        try {
+          await releaseAudio();
+          await writeQueue.current;
+          if (!valid(token)) return;
+          if (writeFailure.current) {
+            await invoke('cancel_voice_recording');
+            throw new Error('음성을 저장하지 못했어요.');
+          }
+          if (!endpoint.hasSpeech) {
+            await invoke('cancel_voice_recording');
+            if (mode === 'confirmation') retryMode.current = 'confirmation';
+            else await close();
+            return;
+          }
+          setVisualState('TRANSCRIBING');
+          setText(mode === 'confirmation' ? '선택을 확인하고 있어요.' : '말씀을 확인하고 있어요.');
+          const result = await invoke<RecordingResult>('stop_voice_recording');
+          if (!valid(token)) {
+            await invoke('discard_voice_recording', { recordingId: result.recordingId }).catch(
+              () => undefined,
+            );
+            return;
+          }
+          if (localPortfolioMode || mode === 'confirmation') {
+            const recognized = await invoke<{ transcript: string; portfolioRequested: boolean }>(
+              'transcribe_local_portfolio',
+              { recordingId: result.recordingId },
+            );
+            if (!valid(token)) return;
+            if (mode === 'confirmation') {
+              const choice = resolveVoiceChoice(recognized.transcript, currentChoices.current);
+              if (choice) await choose(choice);
+              else
+                retry(
+                  '선택을 확인하지 못했어요. 네, 아니오 또는 선택지 번호를 말해 주세요.',
+                  'confirmation',
+                );
+            } else if (recognized.portfolioRequested) {
+              await submit('file.open', { directory: 'desktop', path: '김환성_포트폴리오.pdf' });
+            } else
+              retry(
+                recognized.transcript
+                  ? `“${recognized.transcript}”로 들었어요. 포트폴리오를 열려면 다시 말씀해 주세요. (5초 안에 시작)`
+                  : '음성을 인식하지 못했어요. 5초 안에 다시 말씀해 주세요.',
+              );
+          } else {
+            const accessToken = await requestVoiceAccessToken().catch(async (cause) => {
+              await invoke('discard_voice_recording', { recordingId: result.recordingId });
+              throw cause;
+            });
+            if (!valid(token)) {
+              await invoke('discard_voice_recording', { recordingId: result.recordingId }).catch(
+                () => undefined,
+              );
+              return;
+            }
+            setVisualState('THINKING');
+            const uploaded = await invoke<UploadResult>('upload_voice_recording', {
+              recordingId: result.recordingId,
+              apiBaseUrl,
+              accessToken,
+              conversationId: null,
+            });
+            if (!valid(token)) return;
+            if (
+              uploaded.result.type === 'tool_call' &&
+              uploaded.result.tool &&
+              uploaded.result.arguments
+            )
+              await submit(uploaded.result.tool, uploaded.result.arguments);
+            else
+              showSuccess(uploaded.result.content || uploaded.result.transcript || '완료했어요.');
+          }
+        } catch (cause) {
+          if (valid(token))
+            retry(
+              `${voiceErrorMessage(cause)} 5초 안에 다시 말씀해 주세요.`,
+              mode === 'confirmation' ? 'confirmation' : 'retry',
+            );
+        } finally {
+          finalizing.current = false;
+          startRetryIfReady();
+        }
+      };
+      finishRef.current = finish;
       processor.onaudioprocess = (event) => {
-        if (!recordingActive.current || finalizing.current) return;
+        if (!valid(token) || !recordingActive.current || stopping) return;
         const channel = event.inputBuffer.getChannelData(0);
-        let squareSum = 0;
-        for (let index = 0; index < channel.length; index += 1)
-          squareSum += channel[index] * channel[index];
-        const rms = Math.sqrt(squareSum / channel.length);
-        const normalized = Math.min(1, Math.max(0, (rms - 0.035) / 0.28));
-        smoothedLevel.current = smoothedLevel.current * 0.8 + normalized * 0.2;
-        audioLevel.set(smoothedLevel.current);
+        const rms = Math.sqrt(
+          channel.reduce((sum, sample) => sum + sample * sample, 0) / channel.length,
+        );
+        audioLevel.set(Math.min(1, rms / 0.15));
         const samples = Array.from(channel);
         writeQueue.current = writeQueue.current
           .then(() => invoke<void>('append_voice_recording_samples', { samples }))
           .catch((cause) => {
             writeFailure.current = cause;
-            voiceLog('PCM append failed', cause);
           });
-        const end = endpoint.feed(rms, (channel.length / context.sampleRate) * 1000);
-        speechDetected.current = endpoint.hasSpeech;
-        if (end) {
-          voiceLog('automatic stop requested', { reason: end });
-          void stopAndSave().catch((cause) => {
-            setPhase('ERROR');
-            setError(voiceErrorMessage(cause));
-          });
-        }
+        if (endpoint.feed(rms, (channel.length / event.inputBuffer.sampleRate) * 1000))
+          void finish();
       };
       source.connect(processor);
       processor.connect(gain);
       gain.connect(context.destination);
     } catch (cause) {
+      stream?.getTracks().forEach((track) => track.stop());
+      if (context && context.state !== 'closed') await context.close().catch(() => undefined);
+      if (!valid(token)) return;
       await releaseAudio();
-      if (recordingActive.current) {
-        recordingActive.current = false;
-        void invoke('cancel_voice_recording');
-      }
-      setRecording(false);
-      setPhase('ERROR');
-      setError(
-        `마이크를 시작하지 못했습니다. Windows와 ACE의 마이크 권한을 확인해 주세요. ${voiceErrorMessage(cause)}`,
-      );
+      await invoke('cancel_voice_recording').catch(() => undefined);
+      setVisualState('ERROR');
+      setText(`마이크를 시작하지 못했어요. ${voiceErrorMessage(cause)}`);
+      if (mode !== 'confirmation')
+        timer.current = setTimeout(() => {
+          if (valid(token)) void close();
+        }, 5000);
     }
   };
 
   useEffect(() => {
+    mounted.current = true;
     document.documentElement.dataset.theme = localStorage.getItem('ace-theme') || 'light';
-  }, []);
-
-  useEffect(() => {
+    const unlisteners: (() => void)[] = [];
     let disposed = false;
-    const stops: (() => void)[] = [];
-    const register = async (event: string, callback: () => void) => {
-      const unlisten = await listen(event, callback);
+    const register = async <T,>(name: string, handler: (payload: T) => void) => {
+      const unlisten = await listen<T>(name, (event) => handler(event.payload));
       if (disposed) unlisten();
-      else stops.push(unlisten);
+      else unlisteners.push(unlisten);
     };
     void register('ace-voice-activate', () => {
+      open.current = true;
+      clearTimer();
       setVisible(true);
-      setText('');
-      setError('');
-      void startMicrophone();
+      setActivation((value) => value + 1);
+      updateChoices([]);
+      setText('듣기 준비 중이에요.');
+      setVisualState('LISTENING');
+      const token = ++generation.current;
+      void playWakeChime()
+        .catch(() => undefined)
+        .then(() => {
+          if (valid(token)) void startCapture('command');
+        });
     });
     void register('ace-voice-reset', () => {
+      open.current = false;
+      generation.current += 1;
+      clearTimer();
+      retryMode.current = null;
+      pendingId.current = null;
+      updateChoices([]);
+      setVisible(false);
       void releaseAudio();
-      recordingActive.current = false;
-      setRecording(false);
-      setPhase('IDLE');
-      setText('');
+    });
+    void register<ToolResult>('ace-voice-tool-result', async (result) => {
+      if (!open.current || result.requestId !== pendingId.current) return;
+      clearTimer();
+      setText(result.message);
+      // A confirmation can also be answered in the main window.
+      if (
+        result.status !== 'WAITING_CONFIRMATION' &&
+        (recordingActive.current || currentChoices.current.length)
+      ) {
+        generation.current += 1;
+        retryMode.current = null;
+        updateChoices([]);
+        await releaseAudio();
+        await writeQueue.current.catch(() => undefined);
+        await invoke('cancel_voice_recording').catch(() => undefined);
+        if (!open.current || result.requestId !== pendingId.current) return;
+      }
+      if (result.status === 'WAITING_CONFIRMATION') {
+        updateChoices(result.choices);
+        retryMode.current = 'confirmation';
+        setVisualState('WAITING_CONFIRMATION');
+        startRetryIfReady();
+      } else if (result.status === 'EXECUTING') setVisualState('EXECUTING');
+      else {
+        pendingId.current = null;
+        updateChoices([]);
+        if (result.status === 'SUCCESS') showSuccess(result.message);
+        else retry(`${result.message} 5초 안에 다시 말씀해 주세요.`);
+      }
     });
     return () => {
       disposed = true;
-      stops.forEach((stop) => stop());
+      mounted.current = false;
+      open.current = false;
+      generation.current += 1;
+      clearTimer();
+      unlisteners.forEach((stop) => stop());
       void releaseAudio();
-      if (recordingActive.current) void invoke('cancel_voice_recording');
-      recordingActive.current = false;
+      void invoke('cancel_voice_recording').catch(() => undefined);
     };
   }, []);
-
-  const close = async () => {
-    setError('');
-    try {
-      await cancelTemporary();
-      setText('');
-      setVisible(false);
-      await new Promise((resolve) => window.setTimeout(resolve, 200));
-      await invoke('hide_voice_overlay');
-    } catch (cause) {
-      setError(apiErrorMessage(cause));
-    } finally {
-      setPhase('IDLE');
-    }
-  };
-
-  const visualState =
-    error || phase === 'ERROR'
-      ? 'ERROR'
-      : phase === 'FINALIZING' || phase === 'UPLOADING'
-        ? 'TRANSCRIBING'
-        : phase === 'PROCESSING'
-          ? 'THINKING'
-          : phase === 'EXECUTING'
-            ? 'EXECUTING'
-            : phase === 'SUCCESS'
-              ? 'SUCCESS'
-              : phase === 'IDLE'
-                ? 'IDLE'
-                : 'LISTENING';
 
   return (
     <div className="voice-window">
       <AnimatePresence>
         {visible && (
           <VoiceOverlay
+            key={activation}
             visualState={visualState}
-            transcript={error || text}
+            transcript={text}
             audioLevel={audioLevel}
-            onClose={() => void close()}
             recording={recording}
-            onStopRecording={() =>
-              void stopAndSave().catch((cause) => {
-                voiceLog('manual stop failed', cause);
-                setPhase('ERROR');
-                setError(voiceErrorMessage(cause));
-              })
-            }
+            choices={choices}
+            onChoice={(choice) => void choose(choice)}
+            onClose={() => void close()}
+            onStopRecording={() => void finishRef.current()}
           />
         )}
       </AnimatePresence>

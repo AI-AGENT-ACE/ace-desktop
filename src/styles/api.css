@@ -494,7 +494,9 @@ body:has(.voice-window),
 }
 
 .voice-orb-drag-handle {
-  position: relative;
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
   width: 142px;
   height: 142px;
   flex: 0 0 142px;
@@ -550,12 +552,12 @@ body:has(.voice-window),
 
 .voice-orb-reactive {
   inset: 21px;
-  background: color-mix(in srgb, var(--text) 13%, transparent);
+  background: color-mix(in srgb, var(--text) 32%, transparent);
   box-shadow: 0 0 28px color-mix(in srgb, var(--text) 18%, transparent);
 }
 
 .voice-orb-core {
-  inset: 29px;
+  inset: 24px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--background) 35%, transparent);
   background:
@@ -607,20 +609,63 @@ body:has(.voice-window),
 }
 
 .voice-orb-transcript {
-  display: -webkit-box;
-  width: 220px;
-  max-height: 2.8em;
-  margin: 5px 0 0;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--text) 86%, transparent);
-  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
   font-weight: 550;
   line-height: 1.4;
-  text-align: center;
-  text-overflow: ellipsis;
-  text-shadow: 0 1px 8px var(--background);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  text-align: left;
+}
+
+.voice-orb-bubble {
+  position: absolute;
+  left: 18px;
+  bottom: 165px;
+  width: 288px;
+  max-height: 235px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: 18px 18px 5px 18px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--background) 97%, transparent);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
+}
+.voice-orb-bubble::after {
+  position: absolute;
+  right: 16px;
+  bottom: -10px;
+  content: '';
+  border: 10px solid transparent;
+  border-top-color: var(--background);
+  border-bottom: 0;
+}
+.voice-orb-bubble > p {
+  max-height: 64px;
+  overflow-y: auto;
+}
+.voice-orb-choices {
+  display: grid;
+  gap: 5px;
+  max-height: 126px;
+  overflow-y: auto;
+  margin-top: 9px;
+}
+.voice-orb-choices button {
+  text-align: left;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--background);
+  cursor: pointer;
+}
+.voice-orb-choices button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+.voice-orb-choices small {
+  font-size: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -688,9 +733,18 @@ body:has(.voice-window),
   color: var(--foreground);
   cursor: pointer;
 }
-.message-attachments button:hover { background: var(--hover); }
-.message-attachments span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.message-attachments small { margin-left: auto; color: var(--muted); }
+.message-attachments button:hover {
+  background: var(--hover);
+}
+.message-attachments span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-attachments small {
+  margin-left: auto;
+  color: var(--muted);
+}
 .composer-attachment > span {
   overflow: hidden;
   text-overflow: ellipsis;

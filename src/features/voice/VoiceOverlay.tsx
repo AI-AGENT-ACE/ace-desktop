@@ -1,15 +1,11 @@
 import { useRef, type PointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import {
-  AnimatePresence,
-  motion,
-  useReducedMotion,
-  useSpring,
-  useTransform,
-  type MotionValue,
-} from 'motion/react';
+import { motion, useReducedMotion, useSpring, useTransform, type MotionValue } from 'motion/react';
 import { X } from 'lucide-react';
-import { orbVariants, ringVariants, textVariants, type OrbVisualState } from './orbMotion';
+import { type OrbVisualState } from './orbMotion';
+import type { VoiceChoice } from './voice-session-policy';
+const entrance = { opacity: [0, 1, 0.7, 1], scale: [0.94, 1.04, 1, 1] };
+const still = { opacity: 1, scale: 1 };
 
 const labels: Record<OrbVisualState, string> = {
   HIDDEN: '',
@@ -31,6 +27,8 @@ export function VoiceOverlay({
   recording,
   onStopRecording,
   onClose,
+  choices = [],
+  onChoice,
 }: {
   visualState: OrbVisualState;
   transcript: string;
@@ -38,12 +36,13 @@ export function VoiceOverlay({
   recording: boolean;
   onStopRecording: () => void;
   onClose: () => void;
+  choices?: VoiceChoice[];
+  onChoice?: (choice: string) => void;
 }) {
   const reduced = useReducedMotion();
   const pointer = useRef<{ x: number; y: number; dragging: boolean } | null>(null);
   const smoothLevel = useSpring(audioLevel, { stiffness: 170, damping: 28, mass: 0.35 });
-  const reactiveScale = useTransform(smoothLevel, [0, 1], [1, reduced ? 1.025 : 1.12]);
-  const glowOpacity = useTransform(smoothLevel, [0, 1], [0.24, reduced ? 0.42 : 0.78]);
+  const glowOpacity = useTransform(smoothLevel, [0, 1], [0.5, 0.65]);
 
   const beginPointer = (event: PointerEvent) => {
     if (event.button !== 0) return;
@@ -52,7 +51,11 @@ export function VoiceOverlay({
   };
   const movePointer = (event: PointerEvent) => {
     const start = pointer.current;
-    if (!start || start.dragging || Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5)
+    if (
+      !start ||
+      start.dragging ||
+      Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5
+    )
       return;
     start.dragging = true;
     void invoke('drag_voice_orb').catch(() => undefined);
@@ -69,10 +72,10 @@ export function VoiceOverlay({
       className={`voice-orb-overlay is-${visualState.toLowerCase()}`}
       aria-label="ACE 음성 명령"
       aria-live="polite"
-      initial="hidden"
-      animate={visualState}
-      exit="exit"
-      variants={reduced ? undefined : orbVariants}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: reduced ? 0 : 0.18 }}
     >
       <button
         type="button"
@@ -87,8 +90,14 @@ export function VoiceOverlay({
         className="voice-orb-drag-handle"
         role="button"
         tabIndex={0}
-        aria-label={recording ? 'ACE Orb, 클릭하여 녹음 종료 또는 드래그하여 이동' : 'ACE Orb, 드래그하여 이동'}
-        style={{ scale: visualState === 'LISTENING' ? reactiveScale : 1 }}
+        aria-label={
+          recording
+            ? 'ACE Orb, 클릭하여 녹음 종료 또는 드래그하여 이동'
+            : 'ACE Orb, 드래그하여 이동'
+        }
+        initial={reduced ? false : { opacity: 0, scale: 0.94 }}
+        animate={reduced ? still : entrance}
+        transition={{ duration: reduced ? 0 : 0.48, times: [0, 0.35, 0.65, 1] }}
         onPointerDown={beginPointer}
         onPointerMove={movePointer}
         onPointerUp={endPointer}
@@ -99,24 +108,29 @@ export function VoiceOverlay({
           if ((event.key === 'Enter' || event.key === ' ') && recording) onStopRecording();
         }}
       >
-        <motion.span className="voice-orb-glow" style={{ opacity: visualState === 'LISTENING' ? glowOpacity : undefined }} />
-        <motion.span className="voice-orb-ring" variants={reduced ? undefined : ringVariants} animate={visualState} />
+        <motion.span className="voice-orb-glow" style={{ opacity: glowOpacity }} />
+        <span className="voice-orb-ring" />
         <span className="voice-orb-reactive" />
-        <span className="voice-orb-core"><span className="voice-orb-core-light" /></span>
+        <span className="voice-orb-core">
+          <span className="voice-orb-core-light" />
+        </span>
       </motion.div>
-      <AnimatePresence mode="wait">
-        <motion.p
-          key={`${visualState}:${stateText}`}
-          className="voice-orb-transcript"
-          variants={reduced ? undefined : textVariants}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-          title={stateText}
-        >
-          {stateText}
-        </motion.p>
-      </AnimatePresence>
+      <div className="voice-orb-bubble" role="status">
+        <p className="voice-orb-transcript">{stateText}</p>
+        {choices.length > 0 && (
+          <div className="voice-orb-choices" aria-label="음성 명령 선택지">
+            {choices.map((choice, index) => (
+              <button key={choice.id} onClick={() => onChoice?.(choice.id)}>
+                {index + 1}. {choice.label}
+              </button>
+            ))}
+            {!choices.some((choice) => choice.id === 'no') && (
+              <button onClick={() => onChoice?.('cancel')}>취소</button>
+            )}
+            <small>네·아니오 또는 번호로 답하거나 눌러 주세요.</small>
+          </div>
+        )}
+      </div>
     </motion.aside>
   );
 }

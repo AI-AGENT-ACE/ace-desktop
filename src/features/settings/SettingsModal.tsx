@@ -7,6 +7,7 @@ import type { AgentSettings, Permission, PermissionPolicy } from '../../types';
 import { PermissionSettings } from './PermissionSettings';
 import { WakeDiagnosticPanel } from '../voice/WakeDiagnosticPanel';
 import { WakeSensitivitySettings } from '../voice/WakeSensitivitySettings';
+import { WakeChimeSettings } from '../voice/WakeChimeSettings';
 export function SettingsModal({
   theme,
   wake,
@@ -170,6 +171,7 @@ export function SettingsModal({
         </button>
       </div>
       {wakeReferenceExists && <WakeSensitivitySettings />}
+      <WakeChimeSettings />
       {import.meta.env.DEV && <WakeDiagnosticPanel />}
       {!settings ? (
         <p className="state-text">계정 설정 불러오는 중…</p>
