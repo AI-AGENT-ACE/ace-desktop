@@ -14,10 +14,10 @@ mod wake_diagnostic_data;
 mod wake_diagnostics;
 #[cfg(windows)]
 mod wake_kws;
-mod wake_word;
-mod wake_word_setup;
 #[cfg(windows)]
 mod wake_setup_capture;
+mod wake_word;
+mod wake_word_setup;
 #[tauri::command]
 fn hide_ace(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
