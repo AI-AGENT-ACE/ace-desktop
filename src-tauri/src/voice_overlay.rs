@@ -1,16 +1,31 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::{fs, path::PathBuf};
 use tauri::{Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Default)]
 pub struct VoiceRuntime {
     active: AtomicBool,
+    pending: Mutex<Option<PendingVoiceRequest>>,
 }
 
-const VOICE_WIDTH: f64 = 260.0;
-const VOICE_HEIGHT: f64 = 220.0;
+struct PendingVoiceRequest {
+    id: String,
+    choices: Vec<String>,
+}
+
+impl PendingVoiceRequest {
+    fn accepts(&self, id: &str, choice: &str) -> bool {
+        self.id == id
+            && (self.choices.iter().any(|value| value == choice)
+                || (choice == "cancel" && !self.choices.is_empty()))
+    }
+}
+
+const VOICE_WIDTH: f64 = 380.0;
+const VOICE_HEIGHT: f64 = 420.0;
 const EDGE_MARGIN: i32 = 28;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -228,6 +243,21 @@ pub fn drag_voice_orb(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choice_is_bound_to_current_request_and_consumed_once() {
+        let mut request = PendingVoiceRequest {
+            id: "current".into(),
+            choices: vec!["yes".into(), "no".into()],
+        };
+        assert!(!request.accepts("old", "yes"));
+        assert!(!request.accepts("current", "3"));
+        assert!(request.accepts("current", "no"));
+        assert!(request.accepts("current", "cancel"));
+        request.choices.clear();
+        assert!(!request.accepts("current", "no"));
+        assert!(!request.accepts("current", "cancel"));
+    }
     #[test]
     fn clamps_orb_inside_work_area() {
         let bounds = Bounds {
@@ -258,6 +288,7 @@ mod tests {
 }
 
 pub fn shutdown(app: &tauri::AppHandle) -> Result<(), String> {
+    cancel_request(app)?;
     if let Err(error) = crate::voice_recording::cancel_active(app) {
         eprintln!("ACE temporary voice recording cleanup failed: {error}");
     }
@@ -317,20 +348,135 @@ pub fn submit_voice_tool_call(
     window: tauri::WebviewWindow,
     tool: String,
     arguments: Value,
+    request_id: String,
 ) -> Result<(), String> {
     if window.label() != "voice" || tool.is_empty() || tool.len() > 100 || !arguments.is_object() {
         return Err("BLOCKED".into());
     }
+    if uuid::Uuid::parse_str(&request_id).is_err() || !is_active(&app) {
+        return Err("VOICE_SESSION_EXPIRED".into());
+    }
+    let runtime = app.state::<VoiceRuntime>();
+    let mut pending = runtime.pending.lock().map_err(|_| "VOICE_SESSION_FAILED")?;
+    if pending.is_some() {
+        return Err("DUPLICATE_VOICE_SESSION".into());
+    }
+    *pending = Some(PendingVoiceRequest {
+        id: request_id.clone(),
+        choices: Vec::new(),
+    });
+    if app
+        .emit_to(
+            "main",
+            "ace-voice-tool-call",
+            json!({ "tool": tool, "arguments": arguments, "requestId": request_id }),
+        )
+        .is_err()
+    {
+        *pending = None;
+        return Err("Voice tool delivery failed".into());
+    }
+    Ok(())
+}
+
+fn cancel_request(app: &tauri::AppHandle) -> Result<(), String> {
+    let pending = app
+        .state::<VoiceRuntime>()
+        .pending
+        .lock()
+        .map_err(|_| "VOICE_SESSION_FAILED")?
+        .take();
+    if let Some(pending) = pending {
+        let _ = app.emit_to("main", "ace-voice-request-cancelled", pending.id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_voice_request(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if window.label() != "voice" {
+        return Err("BLOCKED".into());
+    }
+    cancel_request(&app)
+}
+
+#[tauri::command]
+pub fn report_voice_tool_result(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    request_id: String,
+    status: String,
+    message: String,
+    choices: Option<Vec<VoiceChoice>>,
+) -> Result<(), String> {
+    if window.label() != "main"
+        || !matches!(
+            status.as_str(),
+            "EXECUTING" | "SUCCESS" | "ERROR" | "WAITING_CONFIRMATION"
+        )
+        || message.chars().count() > 1000
+    {
+        return Err("BLOCKED".into());
+    }
+    let runtime = app.state::<VoiceRuntime>();
+    let mut pending = runtime.pending.lock().map_err(|_| "VOICE_SESSION_FAILED")?;
+    let Some(current) = pending.as_mut().filter(|p| p.id == request_id) else {
+        return Ok(());
+    };
+    let choices = choices.unwrap_or_default();
+    if choices.len() > 3
+        || choices
+            .iter()
+            .any(|c| c.id.is_empty() || c.id.len() > 40 || c.label.chars().count() > 160)
+    {
+        return Err("INVALID_CHOICES".into());
+    }
+    if status == "WAITING_CONFIRMATION" && choices.is_empty() {
+        return Err("INVALID_CHOICES".into());
+    }
+    current.choices = if status == "WAITING_CONFIRMATION" {
+        choices.iter().map(|c| c.id.clone()).collect()
+    } else {
+        Vec::new()
+    };
+    app.emit_to("voice", "ace-voice-tool-result", json!({ "requestId": request_id, "status": status, "message": message, "choices": choices })).map_err(|e| e.to_string())?;
+    if matches!(status.as_str(), "SUCCESS" | "ERROR") {
+        *pending = None;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct VoiceChoice {
+    id: String,
+    label: String,
+}
+
+#[tauri::command]
+pub fn respond_voice_choice(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    request_id: String,
+    choice_id: String,
+) -> Result<(), String> {
+    if window.label() != "voice" {
+        return Err("BLOCKED".into());
+    }
+    let runtime = app.state::<VoiceRuntime>();
+    let mut pending = runtime.pending.lock().map_err(|_| "VOICE_SESSION_FAILED")?;
+    let current = pending
+        .as_mut()
+        .filter(|p| p.accepts(&request_id, &choice_id))
+        .ok_or("VOICE_CHOICE_EXPIRED")?;
     app.emit_to(
         "main",
-        "ace-voice-tool-call",
-        json!({ "tool": tool, "arguments": arguments }),
+        "ace-voice-choice",
+        json!({ "requestId": request_id, "choiceId": choice_id }),
     )
-    .map_err(|_| "Voice tool delivery failed")?;
-    app.state::<VoiceRuntime>()
-        .active
-        .store(false, Ordering::Release);
-    window
-        .hide()
-        .map_err(|_| "Voice window could not be hidden".into())
+    .map_err(|e| e.to_string())?;
+    current.choices.clear();
+    Ok(())
 }

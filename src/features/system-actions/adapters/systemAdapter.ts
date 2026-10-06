@@ -154,6 +154,7 @@ export const systemAdapter = {
     }
     return {
       success: true,
+      data: native.data ?? undefined,
       message: native.data?.message as string | undefined,
     };
   },

@@ -31,11 +31,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     writer.finalize()?;
     let started = std::time::Instant::now();
-    let result = local_stt::transcribe(&input);
+    let beam = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "5".into())
+        .parse::<usize>()?;
+    let result = if beam == 5 {
+        local_stt::transcribe(&input)
+    } else {
+        local_stt::transcribe_with_beam(&input, beam)
+    };
     let _ = std::fs::remove_file(&input);
     let result = result?;
     println!(
-        "transcript_chars={} portfolio_requested={} elapsed_ms={}",
+        "beam={beam} transcript_chars={} portfolio_requested={} elapsed_ms={}",
         result.transcript.chars().count(),
         result.portfolio_requested,
         started.elapsed().as_millis()

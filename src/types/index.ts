@@ -82,6 +82,7 @@ export interface SystemActionRequest {
   label: string;
 }
 export interface SystemActionResult {
+  data?: Record<string, unknown>;
   success: boolean;
   message?: string;
   errorCode?: string;
