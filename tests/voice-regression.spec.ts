@@ -43,6 +43,10 @@ test('already-created voice window obtains main session and refreshes expired ac
   const main = await context.newPage();
   const voice = await context.newPage();
   const pages = { main, voice };
+  const pageErrors: string[] = [];
+  for (const page of Object.values(pages)) {
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+  }
   let refreshes = 0;
   await context.route('http://127.0.0.1:3002/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -57,7 +61,7 @@ test('already-created voice window obtains main session and refreshes expired ac
       );
     } else await route.fulfill({ json: { items: [] } });
   });
-  for (const [label, page] of Object.entries(pages)) {
+  for (const page of Object.values(pages)) {
     await page.exposeBinding('voiceTestInvoke', async (_source, command: string, args: any) => {
       if (command === 'plugin:event|emit_to') {
         const target = pages[args.target.label as keyof typeof pages];
@@ -71,7 +75,9 @@ test('already-created voice window obtains main session and refreshes expired ac
         );
       }
     });
-    await page.goto(label === 'voice' ? '/#voice' : '/');
+    // Test the session bridge in two independent pages. Mounting the native-only
+    // VoiceWindow before installing the IPC mock causes unrelated page errors.
+    await page.goto('/');
     await page.evaluate(() => {
       const state = { next: 1, callbacks: {} as any, events: {} as any };
       (window as any).__voiceTest = state;
@@ -130,4 +136,5 @@ test('already-created voice window obtains main session and refreshes expired ac
       }
     }),
   ).toContain('로그인이 만료');
+  expect(pageErrors).toEqual([]);
 });
