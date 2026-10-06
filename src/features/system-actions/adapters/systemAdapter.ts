@@ -82,6 +82,18 @@ export function toolRequest(call: ToolCall): SystemActionRequest {
 }
 // Voice parser is a strict allowlist, not an arbitrary shell interpreter.
 export function classifyVoiceCommand(text: string): SystemActionRequest {
+  if (
+    /^(?:바탕\s*화면에서\s*)?(?:김환성[_\s]*)?포트폴리오(?:\.pdf)?\s*(?:열어줘|열어\s*줘)$/i.test(
+      text.trim(),
+    )
+  )
+    return {
+      contractVersion: '1.1',
+      commandType: 'file.open',
+      arguments: { directory: 'desktop', path: '김환성_포트폴리오.pdf' },
+      label: '김환성 포트폴리오 열기',
+      riskLevel: 'SAFE',
+    };
   if (/^(시스템 상태( 조회)?|system status)$/i.test(text))
     return {
       commandType: 'system.status',
@@ -134,7 +146,11 @@ export const systemAdapter = {
     });
     if (!native.success) {
       const errorCode = native.error?.code || 'EXECUTION_FAILED';
-      return { success: false, errorCode, message: native.error?.message || nativeErrors[errorCode] };
+      return {
+        success: false,
+        errorCode,
+        message: native.error?.message || nativeErrors[errorCode],
+      };
     }
     return {
       success: true,
