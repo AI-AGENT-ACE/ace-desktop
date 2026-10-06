@@ -429,7 +429,19 @@ fn process_kws_samples<T: crate::wake_kws::InputSample>(
     crate::wake_kws::feed(pending, input, frame_size, |frame| {
         #[cfg(debug_assertions)]
         crate::wake_diagnostics::before_frame(&frame);
+        #[cfg(debug_assertions)]
+        let capture = crate::wake_diagnostics::active();
+        #[cfg(debug_assertions)]
+        if !capture {
+            rustpotter::diagnostics::begin_frame();
+        }
         let detection = spotter.process_samples(frame);
+        #[cfg(debug_assertions)]
+        if !capture {
+            diagnostics
+                .gates
+                .observe(rustpotter::diagnostics::take_frame());
+        }
         #[cfg(debug_assertions)]
         crate::wake_diagnostics::after_frame(spotter, detection.is_some());
         *processed_frames = processed_frames.saturating_add(1);
@@ -479,10 +491,44 @@ impl From<&rustpotter::RustpotterDetection> for KwsScoreSnapshot {
 #[cfg(windows)]
 #[derive(Default)]
 struct KwsScoreDiagnostics {
+    #[cfg(debug_assertions)]
+    gates: GateDiagnostics,
     last_partial: Option<KwsScoreSnapshot>,
     candidate_peak_score: f32,
     candidate_peak_avg_score: f32,
     candidate_peak_reference_scores: Vec<(String, f32)>,
+}
+
+#[cfg(all(windows, debug_assertions))]
+#[derive(Default, Debug)]
+pub(crate) struct GateDiagnostics {
+    frames: u64,
+    average_rejected: u64,
+    reference_rejected: u64,
+    candidate_matches: u64,
+    max_average: Option<f32>,
+    max_score: Option<f32>,
+}
+
+#[cfg(all(windows, debug_assertions))]
+impl GateDiagnostics {
+    pub(crate) fn observe(&mut self, trace: rustpotter::diagnostics::FrameTrace) {
+        self.frames += 1;
+        self.candidate_matches += trace.candidate_matches as u64;
+        for comparison in trace.comparisons {
+            match comparison.outcome {
+                "average_below_threshold_reference_not_computed" => self.average_rejected += 1,
+                "reference_score_below_threshold" => self.reference_rejected += 1,
+                _ => (),
+            }
+            if let Some(score) = comparison.average {
+                self.max_average = Some(self.max_average.unwrap_or(score).max(score));
+            }
+            if let Some(score) = comparison.score {
+                self.max_score = Some(self.max_score.unwrap_or(score).max(score));
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -618,7 +664,7 @@ fn format_reference_scores(scores: &[(String, f32)]) -> String {
 }
 
 #[cfg(windows)]
-fn downmix_i16(samples: &[i16], channels: u16) -> Vec<i16> {
+pub(crate) fn downmix_i16(samples: &[i16], channels: u16) -> Vec<i16> {
     let channels = channels.max(1) as usize;
     if channels == 1 {
         return samples.to_vec();
@@ -633,7 +679,7 @@ fn downmix_i16(samples: &[i16], channels: u16) -> Vec<i16> {
 }
 
 #[cfg(windows)]
-fn downmix_f32(samples: &[f32], channels: u16) -> Vec<f32> {
+pub(crate) fn downmix_f32(samples: &[f32], channels: u16) -> Vec<f32> {
     let channels = channels.max(1) as usize;
     if channels == 1 {
         return samples.to_vec();
@@ -724,41 +770,13 @@ fn run_listener(
                 "none"
             }
         ));
-        let device = if let Some(device) = default_device {
-            device
-        } else {
-            let mut usable = devices
-                .into_iter()
-                .filter(|candidate| {
-                    candidate.default_input_config().is_ok_and(|config| {
-                        matches!(
-                            config.sample_format(),
-                            cpal::SampleFormat::I16 | cpal::SampleFormat::F32
-                        )
-                    })
-                })
-                .collect::<Vec<_>>();
-            match usable.len() {
-                0 => {
-                    return Err(wake_error(
-                        WAKE_MIC_DEVICE_NOT_FOUND,
-                        "사용 가능한 마이크 장치를 찾지 못했습니다.",
-                        "enumeration returned no compatible input device",
-                    ));
-                }
-                1 => {
-                    wake_log("default device unavailable; using the only compatible input device");
-                    usable.remove(0)
-                }
-                count => {
-                    return Err(wake_error(
-                        WAKE_MIC_CONFIG_FAILED,
-                        "기본 마이크가 없고 사용 가능한 입력 장치가 여러 개입니다.",
-                        format!("{count} compatible candidates; device selection required"),
-                    ));
-                }
-            }
-        };
+        let device = crate::wake_setup_capture::select_device(&host).map_err(|error| {
+            wake_error(
+                WAKE_MIC_CONFIG_FAILED,
+                "기본 마이크를 선택하지 못했습니다.",
+                error,
+            )
+        })?;
         let device_name = device
             .description()
             .map(|description| description.name().to_owned())
@@ -816,6 +834,8 @@ fn run_listener(
         })?;
         wake_log("Wake Word Engine init: success (rustpotter)");
         use rustpotter::WakewordLoad;
+        #[cfg(debug_assertions)]
+        use rustpotter::WakewordSave;
         let reference_path = crate::wake_word_setup::active_reference_path(&app)?;
         let model = crate::wake_word_setup::reference_metadata(&reference_path)?;
         wake_log(format!(
@@ -831,7 +851,7 @@ fn run_listener(
         ));
         let reference_bytes =
             std::fs::read(&reference_path).map_err(|_| WAKE_ENGINE_MODEL_LOAD_FAILED.to_owned())?;
-        let reference =
+        let mut reference =
             rustpotter::WakewordRef::load_from_buffer(&reference_bytes).map_err(|error| {
                 wake_error(
                     WAKE_ENGINE_MODEL_LOAD_FAILED,
@@ -839,6 +859,22 @@ fn run_listener(
                     error,
                 )
             })?;
+        let sensitivity = crate::wake_word_setup::load_settings(&app).sensitivity;
+        sensitivity.apply(&mut reference);
+        wake_log(format!(
+            "effective sensitivity: setting={sensitivity:?}, reference_threshold={:?}, average_threshold={:?}",
+            reference.threshold, reference.avg_threshold
+        ));
+        // Diagnostic replay must receive the exact effective model used by the listener.
+        // The original personal model on disk stays intact.
+        #[cfg(debug_assertions)]
+        let reference_bytes = if sensitivity == crate::wake_word_setup::WakeSensitivity::Sensitive {
+            reference
+                .save_to_buffer()
+                .map_err(|_| WAKE_ENGINE_MODEL_LOAD_FAILED)?
+        } else {
+            reference_bytes
+        };
         spotter
             .add_wakeword_ref("ACE", reference)
             .map_err(|error| {
@@ -1137,6 +1173,11 @@ fn run_listener(
             last_diagnostics = Instant::now();
         }
         if diagnostics_due && cfg!(debug_assertions) {
+            #[cfg(debug_assertions)]
+            wake_log(format!(
+                "KWS gate diagnostics (last interval): {:?}",
+                std::mem::take(&mut score_diagnostics.gates)
+            ));
             let (raw_rms, raw_peak, raw_samples) = raw_levels.take();
             let (engine_rms, engine_peak, engine_samples) = engine_levels.take();
             wake_log(format!(
@@ -1261,6 +1302,44 @@ pub fn get_wake_word_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(windows, debug_assertions))]
+    #[test]
+    fn live_gate_diagnostics_do_not_invent_uncomputed_scores() {
+        use rustpotter::diagnostics::{Comparison, FrameTrace};
+        let mut gates = GateDiagnostics::default();
+        gates.observe(FrameTrace {
+            comparisons: vec![Comparison {
+                average: Some(0.18),
+                average_threshold: 0.22,
+                score: None,
+                threshold: 0.52,
+                references: vec![],
+                outcome: "average_below_threshold_reference_not_computed",
+            }],
+            ..Default::default()
+        });
+        assert_eq!(gates.average_rejected, 1);
+        assert_eq!(gates.max_score, None);
+        gates.observe(FrameTrace {
+            comparisons: vec![Comparison {
+                average: Some(0.30),
+                average_threshold: 0.22,
+                score: Some(0.49),
+                threshold: 0.52,
+                references: vec![],
+                outcome: "reference_score_below_threshold",
+            }],
+            ..Default::default()
+        });
+        assert_eq!(gates.reference_rejected, 1);
+        assert_eq!(gates.max_score, Some(0.49));
+        assert_eq!(gates.candidate_matches, 0);
+        let interval = std::mem::take(&mut gates);
+        assert_eq!(interval.frames, 2);
+        assert_eq!(gates.frames, 0);
+        assert_eq!(gates.max_score, None);
+    }
     use std::path::PathBuf;
 
     #[test]

@@ -35,6 +35,14 @@ fn status(value: serde_json::Value) {
 pub fn active() -> bool {
     CAPTURE.with(|c| c.borrow().is_some())
 }
+pub fn busy() -> bool {
+    STATUS.lock().unwrap().as_ref().is_some_and(|status| {
+        matches!(
+            status["state"].as_str(),
+            Some("starting" | "recording" | "saving")
+        )
+    })
+}
 pub fn initialize(config: &rustpotter::RustpotterConfig, model: &[u8]) {
     if let Some((directory, label)) = REQUEST.lock().unwrap().take() {
         let float = matches!(config.fmt.sample_format, rustpotter::SampleFormat::F32);
