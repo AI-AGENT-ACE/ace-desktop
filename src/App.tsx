@@ -26,7 +26,13 @@ type WakeRuntimeStatus = {
 type WakeSetupStatus = {
   completedSamples: number;
   totalSamples: number;
-  settings: { enabled: boolean; setupCompleted: boolean; referenceExists: boolean };
+  settings: {
+    enabled: boolean;
+    setupCompleted: boolean;
+    referenceExists: boolean;
+    defaultAvailable: boolean;
+    modelSource: 'default' | 'personal' | null;
+  };
 };
 import { MessageList } from './features/chat/MessageList';
 import { TrashModal } from './features/trash/TrashModal';
@@ -107,7 +113,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const [wakeSetupCompleted, setWakeSetupCompleted] = useState(false);
   const [wakeReferenceExists, setWakeReferenceExists] = useState(false);
   const [wakeSetupOpen, setWakeSetupOpen] = useState(false);
-  const [wakeOnboarding, setWakeOnboarding] = useState(false);
+  const [wakeDefaultAvailable, setWakeDefaultAvailable] = useState(false);
+  const [wakeModelSource, setWakeModelSource] = useState<'default' | 'personal' | null>(null);
   const [action, setAction] = useState<Action | null>(null);
   const [pending, setPending] = useState<PendingAction[]>([]);
   const [sending, setSending] = useState(false);
@@ -233,10 +240,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
         setWake(setup.settings.enabled);
         setWakeSetupCompleted(setup.settings.setupCompleted);
         setWakeReferenceExists(setup.settings.referenceExists);
-        if (!localStorage.getItem('ace-onboarding-completed')) {
-          setWakeOnboarding(true);
-          setWakeSetupOpen(true);
-        }
+        setWakeDefaultAvailable(setup.settings.defaultAvailable);
+        setWakeModelSource(setup.settings.modelSource);
         return invoke<WakeRuntimeStatus>('get_wake_word_status');
       })
       .then((status) => {
@@ -603,6 +608,18 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     }
   };
   const busy = mutating || sending || !!current || action?.status === 'pending';
+  const changeWakeModel = async (source: 'default' | 'personal') => {
+    try {
+      const settings = await invoke<WakeSetupStatus['settings']>('set_wake_word_model', { source });
+      setWake(settings.enabled);
+      setWakeReferenceExists(settings.referenceExists);
+      setWakeSetupCompleted(settings.setupCompleted);
+      setWakeDefaultAvailable(settings.defaultAvailable);
+      setWakeModelSource(settings.modelSource);
+    } catch (cause) {
+      setNotice(apiErrorMessage(cause));
+    }
+  };
   return (
     <div className="app">
       <CustomTitleBar onNotice={setNotice} />
@@ -737,6 +754,9 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           onWake={(enabled) => void changeWake(enabled)}
           wakeSetupCompleted={wakeSetupCompleted}
           wakeReferenceExists={wakeReferenceExists}
+          wakeDefaultAvailable={wakeDefaultAvailable}
+          wakeModelSource={wakeModelSource}
+          onWakeModel={(source) => changeWakeModel(source)}
           onWakeSetup={() => setWakeSetupOpen(true)}
           onTrash={() => setModal('trash')}
           onClose={() => setModal(null)}
@@ -745,10 +765,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       )}
       {wakeSetupOpen && (
         <WakeWordSetupModal
-          onboarding={wakeOnboarding}
+          onboarding={false}
           onClose={() => {
-            if (wakeOnboarding) localStorage.setItem('ace-onboarding-completed', 'true');
-            setWakeOnboarding(false);
             setWakeSetupOpen(false);
           }}
           onCompleted={() => {
@@ -757,6 +775,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
             setWakeState('listening');
             setWakeSetupCompleted(true);
             setWakeReferenceExists(true);
+            setWakeModelSource('personal');
           }}
         />
       )}

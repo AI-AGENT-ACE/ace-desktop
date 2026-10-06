@@ -35,7 +35,7 @@ impl WakeSensitivity {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceActivationSettings {
     pub enabled: bool,
@@ -43,6 +43,94 @@ pub struct VoiceActivationSettings {
     pub reference_exists: bool,
     #[serde(default)]
     pub sensitivity: WakeSensitivity,
+    #[serde(default = "legacy_personal_preference")]
+    pub prefer_personal: bool,
+    #[serde(default, skip_deserializing)]
+    pub default_available: bool,
+    #[serde(default, skip_deserializing)]
+    pub model_source: Option<WakeModelSource>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum WakeModelSource {
+    Default,
+    Personal,
+}
+
+fn legacy_personal_preference() -> bool {
+    true
+}
+
+impl Default for VoiceActivationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            setup_completed: false,
+            reference_exists: false,
+            sensitivity: WakeSensitivity::Standard,
+            prefer_personal: false,
+            default_available: false,
+            model_source: None,
+        }
+    }
+}
+
+const DEFAULT_REFERENCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ace-default-wake.rpw"));
+
+fn default_reference_valid() -> bool {
+    #[cfg(windows)]
+    {
+        use rustpotter::WakewordLoad;
+        rustpotter::WakewordRef::load_from_buffer(DEFAULT_REFERENCE).is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn reconcile_models(
+    mut settings: VoiceActivationSettings,
+    personal_valid: bool,
+    default_valid: bool,
+) -> VoiceActivationSettings {
+    let personal_ready = personal_valid && settings.setup_completed;
+    settings.default_available = default_valid;
+    settings.model_source = if settings.prefer_personal && personal_ready {
+        Some(WakeModelSource::Personal)
+    } else if default_valid {
+        Some(WakeModelSource::Default)
+    } else if personal_ready {
+        Some(WakeModelSource::Personal)
+    } else {
+        None
+    };
+    settings.reference_exists = settings.model_source.is_some();
+    if !personal_valid {
+        settings.setup_completed = false;
+    }
+    if !settings.reference_exists {
+        settings.enabled = false;
+    }
+    settings
+}
+
+pub fn selected_reference_path(app: &AppHandle) -> Result<PathBuf, String> {
+    match load_settings(app).model_source {
+        Some(WakeModelSource::Personal) => active_reference_path(app),
+        Some(WakeModelSource::Default) => {
+            let path = wake_dir(app)?.join("default-reference.rpw");
+            fs::create_dir_all(wake_dir(app)?).map_err(|_| "WAKE_SETUP_STORAGE_FAILED")?;
+            if fs::read(&path).ok().as_deref() != Some(DEFAULT_REFERENCE) {
+                let temporary = path.with_extension("rpw.tmp");
+                fs::write(&temporary, DEFAULT_REFERENCE).map_err(|_| "WAKE_SETUP_STORAGE_FAILED")?;
+                fs::rename(temporary, &path).map_err(|_| "WAKE_SETUP_STORAGE_FAILED")?;
+            }
+            Ok(path)
+        }
+        None => Err("사용 가능한 호출 모델이 없습니다. 기본 모델이 포함된 앱을 설치하거나 개인 보정을 진행해 주세요.".into()),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -149,7 +237,7 @@ fn candidate_reference_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn load_settings(app: &AppHandle) -> VoiceActivationSettings {
-    let mut settings = settings_path(app)
+    let settings = settings_path(app)
         .ok()
         .and_then(|path| fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice::<VoiceActivationSettings>(&bytes).ok())
@@ -157,15 +245,7 @@ pub fn load_settings(app: &AppHandle) -> VoiceActivationSettings {
     let reference_valid = active_reference_path(app)
         .ok()
         .is_some_and(|path| validate_reference_file(&path));
-    if !reference_valid {
-        settings.enabled = false;
-        settings.setup_completed = false;
-        settings.reference_exists = false;
-        let _ = save_settings(app, &settings);
-    } else {
-        settings.reference_exists = true;
-    }
-    settings
+    reconcile_models(settings, reference_valid, default_reference_valid())
 }
 
 pub fn save_settings(app: &AppHandle, settings: &VoiceActivationSettings) -> Result<(), String> {
@@ -649,6 +729,8 @@ pub fn complete_wake_word_setup(
         setup_completed: true,
         reference_exists: true,
         sensitivity: WakeSensitivity::Standard,
+        prefer_personal: true,
+        ..VoiceActivationSettings::default()
     };
     save_settings(&app, &settings)?;
     let _ = fs::remove_dir_all(staging_dir(&app)?);
@@ -692,6 +774,8 @@ pub fn postpone_wake_word_setup(
         setup_completed: had_active_reference,
         reference_exists: validate_reference_file(&active),
         sensitivity: load_settings(&app).sensitivity,
+        prefer_personal: load_settings(&app).prefer_personal,
+        ..VoiceActivationSettings::default()
     };
     save_settings(&app, &settings)?;
     let _ = fs::remove_dir_all(staging_dir(&app)?);
@@ -743,12 +827,49 @@ pub fn set_persisted_enabled(
     enabled: bool,
 ) -> Result<VoiceActivationSettings, String> {
     let mut settings = load_settings(app);
-    if enabled && !(settings.setup_completed && settings.reference_exists) {
-        return Err("WAKE_SETUP_REQUIRED".into());
+    if enabled && !settings.reference_exists {
+        return Err("사용 가능한 호출 모델이 없습니다. 기본 모델이 포함된 앱을 설치하거나 개인 보정을 진행해 주세요.".into());
     }
     settings.enabled = enabled;
     save_settings(app, &settings)?;
     Ok(settings)
+}
+
+#[tauri::command]
+pub async fn set_wake_word_model(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    source: WakeModelSource,
+) -> Result<VoiceActivationSettings, String> {
+    require_main(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if crate::voice_overlay::is_active(&app) || staging_dir(&app)?.exists() {
+            return Err("음성 입력이나 개인 보정을 마친 뒤 변경해 주세요.".into());
+        }
+        let previous = load_settings(&app);
+        match source {
+            WakeModelSource::Default if !previous.default_available => {
+                return Err("이 앱에는 기본 호출 모델이 포함되어 있지 않습니다.".into())
+            }
+            WakeModelSource::Personal if !previous.setup_completed => {
+                return Err("저장된 개인 보정이 없습니다.".into())
+            }
+            _ => {}
+        }
+        let mut next = previous.clone();
+        next.prefer_personal = source == WakeModelSource::Personal;
+        crate::wake_word::stop(&app);
+        let outcome =
+            save_settings(&app, &next).and_then(|()| crate::wake_word::restore_persisted(&app));
+        if let Err(error) = outcome {
+            let _ = save_settings(&app, &previous);
+            let _ = crate::wake_word::restore_persisted(&app);
+            return Err(error);
+        }
+        Ok(load_settings(&app))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -769,8 +890,8 @@ pub async fn set_wake_word_sensitivity(
             return Err("진단 녹음을 마친 뒤 감도를 변경해 주세요.".into());
         }
         let previous = load_settings(&app);
-        if !previous.setup_completed || !previous.reference_exists {
-            return Err("먼저 목소리를 등록해 주세요.".into());
+        if !previous.reference_exists {
+            return Err("사용 가능한 호출 모델이 없습니다.".into());
         }
         let mut next = previous.clone();
         next.sensitivity = sensitivity;
@@ -822,6 +943,11 @@ mod tests {
         .unwrap();
         assert!(settings.enabled && settings.setup_completed && settings.reference_exists);
         assert_eq!(settings.sensitivity, WakeSensitivity::Standard);
+        assert!(settings.prefer_personal);
+        assert_eq!(
+            reconcile_models(settings, true, true).model_source,
+            Some(WakeModelSource::Personal)
+        );
         assert!(serde_json::from_str::<WakeSensitivity>(r#""unrestricted""#).is_err());
     }
 
@@ -916,8 +1042,78 @@ mod tests {
                 "enabled": false,
                 "setupCompleted": false,
                 "referenceExists": false,
-                "sensitivity": "standard"
+                "sensitivity": "standard",
+                "preferPersonal": false,
+                "defaultAvailable": false,
+                "modelSource": null
             })
         );
+    }
+
+    #[test]
+    fn fresh_install_can_use_default_without_enrollment_but_requires_opt_in() {
+        let settings = reconcile_models(VoiceActivationSettings::default(), false, true);
+        assert_eq!(settings.model_source, Some(WakeModelSource::Default));
+        assert!(settings.reference_exists && settings.default_available);
+        assert!(!settings.setup_completed && !settings.enabled);
+    }
+
+    #[test]
+    fn switching_to_default_preserves_personal_enrollment_and_disabled_choice() {
+        let settings = VoiceActivationSettings {
+            setup_completed: true,
+            ..VoiceActivationSettings::default()
+        };
+        let mut selected = reconcile_models(settings, true, true);
+        assert_eq!(selected.model_source, Some(WakeModelSource::Default));
+        assert!(selected.setup_completed);
+        assert!(!selected.enabled);
+        selected.prefer_personal = true;
+        assert_eq!(
+            reconcile_models(selected, true, true).model_source,
+            Some(WakeModelSource::Personal)
+        );
+    }
+
+    #[test]
+    fn absent_models_disable_listening_and_unverified_personal_models_are_not_selected() {
+        let settings = VoiceActivationSettings {
+            enabled: true,
+            ..VoiceActivationSettings::default()
+        };
+        for personal in [false, true] {
+            let unavailable = reconcile_models(settings.clone(), personal, false);
+            assert!(!unavailable.enabled && !unavailable.reference_exists);
+            assert_eq!(unavailable.model_source, None);
+        }
+        let fallback = reconcile_models(settings, true, true);
+        assert!(fallback.enabled);
+        assert_eq!(fallback.model_source, Some(WakeModelSource::Default));
+    }
+
+    #[test]
+    fn missing_default_keeps_a_verified_personal_model_usable() {
+        let settings = VoiceActivationSettings {
+            enabled: true,
+            setup_completed: true,
+            ..VoiceActivationSettings::default()
+        };
+        let fallback = reconcile_models(settings, true, false);
+        assert!(fallback.enabled);
+        assert_eq!(fallback.model_source, Some(WakeModelSource::Personal));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn supplied_default_model_can_be_registered_by_the_live_engine() {
+        if DEFAULT_REFERENCE.is_empty() {
+            return; // CI has no private model; the selection policy is still tested above.
+        }
+        use rustpotter::WakewordLoad;
+        let reference = rustpotter::WakewordRef::load_from_buffer(DEFAULT_REFERENCE).unwrap();
+        assert!(!reference.samples_features.is_empty());
+        let mut engine =
+            rustpotter::Rustpotter::new(&rustpotter::RustpotterConfig::default()).unwrap();
+        engine.add_wakeword_ref("ACE", reference).unwrap();
     }
 }

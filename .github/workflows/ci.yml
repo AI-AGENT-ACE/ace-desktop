@@ -28,6 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: node --experimental-vm-modules scripts/test-wake-setup.mjs
+      - run: node --experimental-vm-modules scripts/test-wake-default.mjs
       - run: node --experimental-vm-modules scripts/test-voice-regression.mjs
       - run: node --experimental-vm-modules scripts/test-orb-session.mjs
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check

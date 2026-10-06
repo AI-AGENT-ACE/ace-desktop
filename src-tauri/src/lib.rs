@@ -120,6 +120,7 @@ pub fn run() {
             #[cfg(all(windows, debug_assertions))]
             wake_diagnostics::retain_wake_setup_diagnostics,
             wake_word_setup::get_wake_word_setup_status,
+            wake_word_setup::set_wake_word_model,
             wake_word_setup::set_wake_word_sensitivity,
             wake_word_setup::prepare_wake_word_setup,
             wake_word_setup::start_wake_word_sample,
