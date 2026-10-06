@@ -238,4 +238,4 @@ Git 작성자는 저장소 로컬에 `김환성 <amc214677@gmail.com>`으로 설
 
 `fix/wake-native-enrollment` → `feat/local-voice-portfolio` → `fix/voice-orb-session` 순으로 의존하는 브랜치로 분리했다. 한국어 Conventional Commit 메시지를 사용한다. 앞 PR을 기준으로 다음 PR을 만들어 중복 변경을 줄이고, 실제 음성/시각 검증과 CI를 마친 뒤 순서대로 병합하는 방식을 선택했다. main은 변경하지 않았다.
 
-현재 GitHub push는 프록시를 통한 443 연결 실패로 막혔다. GitHub PR은 아직 생성되지 않았다. `ace-desktop/docs/pr/`에 사건·원인 분석·해결 방안·결과 형식의 PR 본문과 업로드 절차를 준비했다. `ace-docs`는 독립 Git 저장소가 아니므로 해당 조사 문서의 사본을 `ace-desktop/docs/WAKE_WORD_TROUBLESHOOTING.md`에도 보관한다.
+이전 조사 환경에서는 GitHub push가 프록시의 443 연결 실패로 막혔다. 2026-10-06에는 기존 원격 브랜치와 인증을 확인하고 PR #19 → #20 → #21을 생성했다. 현재 사용자 요청은 자동 검사와 충돌 확인 후 순서대로 main에 병합하는 것이다. 실제 마이크·화면 검증의 제한은 유지한다. 최신 PR 링크와 병합 절차는 [PR 진행 문서](pr/README.md)에 기록한다. `ace-docs`는 독립 Git 저장소가 아니므로 조사 문서 사본을 이 저장소에도 보관한다.

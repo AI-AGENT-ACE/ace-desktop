@@ -1,6 +1,6 @@
 # 음성 수정 PR 진행 방법
 
-현재 변경은 세 개의 의존 브랜치로 커밋했다. main은 병합하지 않았다. 한 번에 큰 PR로 묶기보다, 각 사건의 원인과 결과를 검토할 수 있게 Draft PR 세 개로 분리한다. 실제 음성/시각 검증과 CI를 확인한 뒤 순서대로 병합한다.
+변경은 세 개의 의존 브랜치로 나눴다. 2026-10-06에 기존 원격 브랜치로 한국어 PR을 생성했다. 사용자 요청에 따라 자동 검사와 충돌 여부를 확인한 뒤 순서대로 main에 병합한다. 실제 마이크·Windows 화면 동작은 자동 검사와 별개이며, 미검증 범위는 각 PR에 명시한다.
 
 | 순서 | head | base | 본문 |
 |---|---|---|---|
@@ -10,18 +10,12 @@
 
 ## 현재 업로드 상태
 
-개발 도구에서 GitHub push가 프록시의 443 연결 실패로 중단됐다. **원격 브랜치 업로드와 PR 생성은 완료하지 않았다.** GitHub CLI도 이 환경에 설치되어 있지 않다. 다음 명령은 네트워크와 GitHub 인증이 가능한 환경에서 사용하는 후속 절차다. 현재 브랜치에서 이 문서들과 PR 본문을 볼 수 있다.
+이전 환경의 프록시 오류 기록과 달리 현재 세 작업 브랜치는 원격에 존재한다. GitHub CLI 인증과 원격 연결도 확인했다. 샌드박스의 Git 인증 오류는 정식 실행 승인을 받아 조회했다. 이미 생성한 아래 PR을 사용하며 중복 생성하지 않는다.
 
-```powershell
-git push -u origin fix/wake-native-enrollment
-git push -u origin feat/local-voice-portfolio
-git push -u origin fix/voice-orb-session
+- [#19: 등록 입력 통일과 실제 호출 검증](https://github.com/AI-AGENT-ACE/ace-desktop/pull/19)
+- [#20: 세션 복구와 로컬 포트폴리오 음성 명령](https://github.com/AI-AGENT-ACE/ace-desktop/pull/20)
+- [#21: 오브 표시와 재시도·확인 흐름 개선](https://github.com/AI-AGENT-ACE/ace-desktop/pull/21)
 
-gh pr create --draft --base main --head fix/wake-native-enrollment --title 'fix(wake): 등록 입력 통일과 실제 호출 검증' --body-file docs/pr/01-wake-native-enrollment.md
-gh pr create --draft --base fix/wake-native-enrollment --head feat/local-voice-portfolio --title 'feat(voice): 세션 복구와 로컬 포트폴리오 음성 명령' --body-file docs/pr/02-local-voice-portfolio.md
-gh pr create --draft --base feat/local-voice-portfolio --head fix/voice-orb-session --title 'fix(voice): 오브 표시와 재시도·확인 흐름 개선' --body-file docs/pr/03-voice-orb-session.md
-```
-
-CLI가 없으면 GitHub 웹에서 위 base/head를 선택하고 해당 본문을 사용한다. 앞 PR을 병합할 때 다음 PR의 base를 main으로 옮기고 비교 diff를 확인한다. 선행 커밋을 보존하는 merge 방식을 쓰면 의존 관계 관리가 쉽다. squash/rebase merge를 선택하면 후속 브랜치도 새 기준에 맞춰 rebase해야 하므로 자동으로 main에 합치지 않는다.
+표의 base는 PR 생성 당시 기준이다. 앞 PR을 병합한 뒤 다음 PR의 base를 main으로 옮기고 비교 diff와 CI를 확인한다. 선행 커밋을 보존하는 merge commit 방식으로 병합한다. 최종 상태와 검사 결과는 링크된 PR을 기준으로 확인한다. Git 명령은 ACE 상위 폴더에서 `git -C ./ace-desktop`으로 실행하고, gh 명령은 해당 저장소를 작업 디렉터리로 사용한다.
 
 커밋은 `fix(scope): 한국어 설명`, `feat(scope): 한국어 설명`, `docs(scope): 한국어 설명` 형식을 따른다. Git 작성자 이름/이메일은 이 저장소에만 설정했다.
