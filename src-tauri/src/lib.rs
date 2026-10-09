@@ -106,6 +106,7 @@ pub fn run() {
             voice_recording::upload_voice_recording,
             voice_recording::transcribe_local_portfolio,
             voice_overlay::report_voice_tool_result,
+            voice_overlay::request_tool_confirmation,
             voice_overlay::respond_voice_choice,
             voice_overlay::cancel_voice_request,
             tray::set_wake_word_enabled,

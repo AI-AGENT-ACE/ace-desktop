@@ -71,12 +71,25 @@ interface NativeToolResult {
 export function localPolicy(commandType: string): IpcRiskLevel {
   return policies[commandType] || 'BLOCKED';
 }
+export function toolLabel(tool: string, args: Record<string, unknown> = {}): string {
+  const names: Record<string, string> = {
+    'app.open': '앱 실행',
+    'app.close': '앱 종료',
+    'file.open': '파일 열기',
+    'file.delete': '파일 삭제',
+    'file.rename': '파일 이름 변경',
+    'file.search': '파일 찾기',
+    'folder.open': '폴더 열기',
+  };
+  const target = args.original ?? args.appName ?? args.canonicalId ?? args.path;
+  return `${names[tool] || tool}${typeof target === 'string' ? ` · ${target.slice(0, 80)}` : ''}`;
+}
 export function toolRequest(call: ToolCall): SystemActionRequest {
   return {
     contractVersion: call.version || '1.1',
     commandType: call.tool,
     arguments: call.arguments,
-    label: call.tool,
+    label: toolLabel(call.tool, call.arguments),
     riskLevel: localPolicy(call.tool),
   };
 }

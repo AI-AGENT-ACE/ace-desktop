@@ -8,6 +8,7 @@ async function settings(overrides = {}) {
   const calls = [];
   const context = vm.createContext({ console });
   const exports = {
+    '../../../package.json': { default: { version: '0.1.0' } },
     react: {
       useEffect() {},
       useRef: (value) => ({ current: value }),
@@ -94,19 +95,29 @@ test('new user enables wake directly without enrollment; calibration remains opt
   toggle.props.onClick();
   assert.deepEqual(ui.calls, [['wake', true]]);
   const calibration = ui.nodes.find(
-    (node) => node.type === 'button' && ui.text(node) === '내 목소리에 맞게 보정 (선택)',
+    (node) => node.type === 'button' && ui.text(node) === '내 목소리로 ACE 호출어 녹음',
   );
   calibration.props.onClick();
   assert.deepEqual(ui.calls, [['wake', true], ['setup']]);
 });
 
-test('existing enrollment can switch to default without recording again', async () => {
+test('existing enrollment remains optional without obsolete model switching or diagnostic controls', async () => {
   const ui = await settings({ wakeSetupCompleted: true, wakeModelSource: 'personal' });
-  ui.nodes
-    .find((node) => node.type === 'button' && ui.text(node) === '기본 호출로 전환')
-    .props.onClick();
-  await Promise.resolve();
-  assert.deepEqual(ui.calls, [['model', 'default']]);
+  assert.equal(
+    ui.nodes.some((node) => node.type === 'button' && ui.text(node) === '기본 호출로 전환'),
+    false,
+  );
+  assert.equal(
+    ui.nodes.some((node) => node.type === 'diagnostics'),
+    false,
+  );
+  assert.ok(
+    ui.nodes.some(
+      (node) =>
+        node.props?.className === 'settings-footnote' && ui.text(node).includes('ACE 0.1.0'),
+    ),
+  );
+  assert.deepEqual(ui.calls, []);
 });
 
 test('missing model is reported rather than silently opening enrollment', async () => {

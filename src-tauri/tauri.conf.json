@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:3001"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:3001 https://ace-backend-cd8i.onrender.com"
     }
   },
   "bundle": {

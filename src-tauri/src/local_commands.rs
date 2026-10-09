@@ -234,7 +234,7 @@ fn registry_app_paths() -> Vec<PathBuf> {
     Vec::new()
 }
 
-fn discover_apps() -> Vec<InstalledApp> {
+pub(crate) fn discover_apps() -> Vec<InstalledApp> {
     let mut apps = Vec::new();
     #[cfg(windows)]
     {

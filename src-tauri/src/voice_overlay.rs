@@ -456,6 +456,63 @@ pub struct VoiceChoice {
 }
 
 #[tauri::command]
+pub fn request_tool_confirmation(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    request_id: String,
+    message: String,
+    choices: Vec<VoiceChoice>,
+) -> Result<(), String> {
+    if window.label() != "main"
+        || uuid::Uuid::parse_str(&request_id).is_err()
+        || message.chars().count() > 1000
+        || choices.is_empty()
+        || choices.len() > 3
+        || choices
+            .iter()
+            .any(|c| c.id.is_empty() || c.id.len() > 40 || c.label.chars().count() > 160)
+    {
+        return Err("BLOCKED".into());
+    }
+    let runtime = app.state::<VoiceRuntime>();
+    {
+        let mut pending = runtime.pending.lock().map_err(|_| "VOICE_SESSION_FAILED")?;
+        if pending.as_ref().is_some_and(|p| p.id != request_id) {
+            return Err("DUPLICATE_VOICE_SESSION".into());
+        }
+        *pending = Some(PendingVoiceRequest {
+            id: request_id.clone(),
+            choices: choices.iter().map(|c| c.id.clone()).collect(),
+        });
+    }
+    let voice = app
+        .get_webview_window("voice")
+        .ok_or("VOICE_SESSION_FAILED")?;
+    let result: Result<(), String> = (|| {
+        restore_position(&app, &voice)?;
+        voice
+            .set_always_on_top(true)
+            .map_err(|_| "VOICE_SESSION_FAILED")?;
+        voice.show().map_err(|_| "VOICE_SESSION_FAILED")?;
+        runtime.active.store(true, Ordering::Release);
+        app.emit_to(
+            "voice",
+            "ace-tool-confirmation-open",
+            json!({"requestId":request_id,"message":message,"choices":choices}),
+        )
+        .map_err(|_| "VOICE_SESSION_FAILED".to_string())
+    })();
+    if result.is_err() {
+        if let Ok(mut pending) = runtime.pending.lock() {
+            *pending = None;
+        }
+        runtime.active.store(false, Ordering::Release);
+        let _ = voice.hide();
+    }
+    result
+}
+
+#[tauri::command]
 pub fn respond_voice_choice(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,

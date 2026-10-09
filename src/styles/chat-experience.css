@@ -1,0 +1,132 @@
+.message.user {
+  width: fit-content;
+  max-width: 85%;
+  margin-left: auto;
+  border-radius: 18px 18px 4px 18px;
+  overflow-wrap: anywhere;
+}
+.message.user .message-author {
+  display: none;
+}
+.thinking-bubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+.thinking-message small {
+  display: block;
+  color: var(--muted);
+  margin-top: 8px;
+  font-size: 12px;
+}
+.thinking-dots {
+  display: inline-flex;
+  gap: 4px;
+}
+.thinking-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: thinking-pulse 1.3s infinite;
+}
+.thinking-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinking-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes thinking-pulse {
+  0%,
+  70%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+.typing-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 16px;
+  border-radius: 2px;
+  background: currentColor;
+  animation: thinking-pulse 1s infinite;
+}
+.response-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.response-actions button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.response-actions button:hover {
+  color: var(--text);
+}
+.stop-button {
+  border-radius: 50%;
+}
+.wake-personal-row {
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.wake-personal-row > div {
+  flex: 1 1 230px;
+}
+.wake-record-button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 10px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+.wake-record-button:hover {
+  background: var(--hover);
+}
+.settings-footnote {
+  text-align: center;
+  margin-top: 24px;
+  padding-top: 16px;
+}
+.inline-tool-confirmation {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  z-index: 100;
+}
+.inline-tool-confirmation button {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+}
+.voice-orb-choices {
+  grid-template-columns: 1fr;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots i,
+  .typing-cursor {
+    animation: none;
+  }
+}
