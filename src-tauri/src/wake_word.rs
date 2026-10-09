@@ -182,7 +182,7 @@ pub fn set_enabled(app: &AppHandle, enabled: bool) -> Result<WakeWordStatus, Str
 
 pub fn restore_persisted(app: &AppHandle) -> Result<(), String> {
     let settings = crate::wake_word_setup::load_settings(app);
-    if settings.enabled && settings.setup_completed && settings.reference_exists {
+    if settings.enabled && settings.reference_exists {
         start(app)
     } else {
         Ok(())
@@ -218,9 +218,9 @@ fn stop_with_reason(app: &AppHandle, reason: &str) {
 
 fn start(app: &AppHandle) -> Result<(), String> {
     let settings = crate::wake_word_setup::load_settings(app);
-    if !(settings.enabled && settings.setup_completed && settings.reference_exists) {
+    if !(settings.enabled && settings.reference_exists) {
         return Err(
-            "WAKE_SETUP_REQUIRED: 음성 호출을 사용하려면 먼저 목소리를 등록해주세요.".to_owned(),
+            "사용 가능한 호출 모델이 없습니다. 기본 모델이 포함된 앱을 설치하거나 개인 보정을 진행해 주세요.".to_owned(),
         );
     }
     let runtime = app.state::<WakeWordRuntime>();
@@ -836,7 +836,7 @@ fn run_listener(
         use rustpotter::WakewordLoad;
         #[cfg(debug_assertions)]
         use rustpotter::WakewordSave;
-        let reference_path = crate::wake_word_setup::active_reference_path(&app)?;
+        let reference_path = crate::wake_word_setup::selected_reference_path(&app)?;
         let model = crate::wake_word_setup::reference_metadata(&reference_path)?;
         wake_log(format!(
             "reference diagnostics: instance_id={listener_id}, model_rms={:.6}, reference_mfcc_frames={:?}, average_mfcc_frames={:?}; subthreshold scores unavailable in Rustpotter public API",
@@ -855,7 +855,7 @@ fn run_listener(
             rustpotter::WakewordRef::load_from_buffer(&reference_bytes).map_err(|error| {
                 wake_error(
                     WAKE_ENGINE_MODEL_LOAD_FAILED,
-                    "사용자 Wake Word reference를 불러오지 못했습니다.",
+                    "Wake Word 호출 모델을 불러오지 못했습니다.",
                     error,
                 )
             })?;
@@ -884,7 +884,10 @@ fn run_listener(
                     error,
                 )
             })?;
-        wake_log("Wake Word Model load: success (user reference)");
+        wake_log(format!(
+            "Wake Word Model load: success ({:?})",
+            crate::wake_word_setup::load_settings(&app).model_source
+        ));
 
         let (audio_tx, audio_rx) = mpsc::sync_channel::<AudioChunk>(12);
         let (event_tx, event_rx) = mpsc::sync_channel::<ListenerEvent>(8);

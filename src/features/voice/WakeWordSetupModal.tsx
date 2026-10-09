@@ -114,8 +114,8 @@ export function WakeWordSetupModal({ onboarding = false, onClose, onCompleted }:
         onChange={event => setRetainDiagnostics(event.target.checked)} />개발 진단용 WAV 로컬 보관 (앞뒤 무음 정리 후 저장, 직접 삭제 전까지 유지)</label>}
       {phase === 'intro' && <>
         <div className="wake-setup-icon"><Mic size={28} /></div>
-        <h2>음성으로 ACE를 호출할 수 있습니다</h2>
-        <p>“ACE”라고 말하면 앱을 빠르게 호출할 수 있습니다. 선택 기능이며 나중에 설정할 수도 있습니다.</p>
+        <h2>내 목소리에 맞게 보정합니다</h2>
+        <p>기본 호출이 잘 반응하지 않을 때만 진행하세요. 목소리 5회와 호출 테스트로 개인 보정을 만듭니다.</p>
         <div className="wake-privacy"><ShieldCheck size={17} /><span>목소리 데이터는 이 기기에서만 처리되며 서버로 전송되지 않습니다.</span></div>
         <div className="modal-actions"><button onClick={() => void close()}>나중에 하기</button><button className="primary" onClick={() => void prepare()}>음성 호출 설정하기</button></div>
       </>}

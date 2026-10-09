@@ -16,6 +16,9 @@ export function SettingsModal({
   onWake,
   wakeSetupCompleted,
   wakeReferenceExists,
+  wakeDefaultAvailable,
+  wakeModelSource,
+  onWakeModel,
   onWakeSetup,
   onTrash,
   onClose,
@@ -28,6 +31,9 @@ export function SettingsModal({
   onWake: (value: boolean) => void;
   wakeSetupCompleted: boolean;
   wakeReferenceExists: boolean;
+  wakeDefaultAvailable: boolean;
+  wakeModelSource: 'default' | 'personal' | null;
+  onWakeModel: (source: 'default' | 'personal') => Promise<void>;
   onWakeSetup: () => void;
   onTrash: () => void;
   onClose: () => void;
@@ -144,9 +150,11 @@ export function SettingsModal({
                     ? '음성 입력 중에는 호출어 감지를 잠시 멈춥니다.'
                     : wakeState === 'error'
                       ? '음성 감지를 시작하지 못했습니다. Tray에서 다시 시도할 수 있습니다.'
-                      : wakeReferenceExists
-                        ? '내 목소리를 사용하여 “ACE” 호출을 감지합니다.'
-                        : '음성 호출을 사용하려면 먼저 목소리를 등록해주세요.'}
+                      : wakeModelSource === 'personal'
+                        ? '저장된 개인 보정으로 “ACE” 호출을 감지합니다.'
+                        : wakeReferenceExists
+                          ? '녹음 없이 켜고 “ACE”라고 불러보세요.'
+                          : '기본 호출 모델이 없습니다. 개인 보정을 사용하거나 기본 모델이 포함된 앱을 설치해 주세요.'}
           </p>
         </div>
         <button
@@ -154,9 +162,8 @@ export function SettingsModal({
           role="switch"
           aria-checked={wake}
           aria-label="Wake Word 활성화"
-          onClick={() =>
-            wakeReferenceExists && wakeSetupCompleted ? onWake(!wake) : onWakeSetup()
-          }
+          disabled={!wakeReferenceExists && !wake}
+          onClick={() => onWake(!wake)}
         >
           <span />
         </button>
@@ -166,8 +173,26 @@ export function SettingsModal({
           호출어 <strong>ACE</strong>
         </span>
         <span>음성 처리는 이 기기에서 수행됩니다.</span>
+        {wakeDefaultAvailable && wakeModelSource === 'personal' && (
+          <button
+            className="settings-navigation"
+            disabled={busy}
+            onClick={() => void update(() => onWakeModel('default'))}
+          >
+            기본 호출로 전환
+          </button>
+        )}
+        {wakeSetupCompleted && wakeModelSource === 'default' && (
+          <button
+            className="settings-navigation"
+            disabled={busy}
+            onClick={() => void update(() => onWakeModel('personal'))}
+          >
+            저장된 개인 보정 사용
+          </button>
+        )}
         <button className="settings-navigation" onClick={onWakeSetup}>
-          {wakeReferenceExists ? '목소리 다시 등록' : '음성 호출 설정하기'}
+          내 목소리에 맞게 보정 (선택)
         </button>
       </div>
       {wakeReferenceExists && <WakeSensitivitySettings />}
