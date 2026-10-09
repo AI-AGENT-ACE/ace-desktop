@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   AudioLines,
-  Check,
   CircleAlert,
-  LoaderCircle,
   PanelLeftOpen,
   SlidersHorizontal,
   X,
@@ -15,6 +13,7 @@ import { CustomTitleBar } from './layouts/CustomTitleBar';
 import { Sidebar } from './layouts/Sidebar';
 import { Modal } from './components/Modal';
 import { ChatComposer, type UploadProgress } from './features/chat/ChatComposer';
+import { ToolConfirmation } from './features/system-actions/ToolConfirmation';
 
 type WakeRuntimeState = 'disabled' | 'starting' | 'listening' | 'triggered' | 'paused' | 'error';
 type WakeRuntimeStatus = {
@@ -645,7 +644,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       return;
     }
     if (!needsConfirmation) void execute(current, risk !== 'BLOCKED');
-    else if (isTauri()) {
+    else if (current.voice && isTauri()) {
       if (!current.voiceRequestId) {
         setPending((previous) =>
           previous.map((item) =>
@@ -660,8 +659,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           (current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)) +
           ' 작업을 실행할까요?',
         choices: [
-          { id: 'yes', label: '예, 실행' },
-          { id: 'no', label: '아니오, 취소' },
+          { id: 'yes', label: '네' },
+          { id: 'no', label: '아니오' },
         ],
       }).catch((cause) => {
         setNotice(apiErrorMessage(cause));
@@ -799,17 +798,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
               </div>
             </div>
           )}
-          {action && (
+          {action?.status === 'error' && (
             <div className={`system-action ${action.status}`} role="status">
-              {action.status === 'pending' ? (
-                <LoaderCircle size={17} className="spin" />
-              ) : action.status === 'success' ? (
-                <Check size={17} />
-              ) : (
-                <CircleAlert size={17} />
-              )}
+              <CircleAlert size={17} />
               <span>{action.message}</span>
-              {action.status !== 'pending' && (
+              {
                 <button
                   className="icon-button"
                   aria-label="실행 상태 닫기"
@@ -817,7 +810,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 >
                   <X size={15} />
                 </button>
-              )}
+              }
             </div>
           )}
           <ChatComposer
@@ -897,15 +890,13 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           </form>
         </Modal>
       )}
-      {current && needsConfirmation && !isTauri() && (
-        <div className="inline-tool-confirmation" role="group" aria-label="도구 실행 확인">
-          <p>
-            {current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)}{' '}
-            작업을 실행할까요?
-          </p>
-          <button onClick={() => void execute(current, true)}>예</button>
-          <button onClick={() => void execute(current, false)}>아니오</button>
-        </div>
+      {current && needsConfirmation && (!current.voice || !isTauri()) && (
+        <ToolConfirmation
+          key={current.call?.id || current.voiceRequestId || 'main'}
+          label={current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)}
+          busy={action?.status === 'pending'}
+          onChoose={(approved) => void execute(current, approved)}
+        />
       )}
       {notice && (
         <div className="toast" role="status">
