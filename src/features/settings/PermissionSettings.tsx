@@ -3,7 +3,6 @@ import { ChevronDown } from 'lucide-react';
 import type { Permission, PermissionPolicy } from '../../types';
 
 const names: Record<string, string> = {
-  'weather.current': '날씨 조회',
   'app.open': '앱 실행',
   'app.close': '앱 종료',
   'file.open': '파일 열기',

@@ -251,10 +251,37 @@ test('silent retry closes; repeated failures remain retryable', async () => {
   await h.activate();
   await h.say();
   await h.say();
+  assert.equal(h.render().props.transcript, '제대로 인식하지 못했습니다. 다시 말씀해주세요.');
   assert.equal(h.calls.filter((c) => c.name === 'transcribe_local_portfolio').length, 2);
   await h.feed(0, 49);
   assert.ok(h.render());
   await h.feed(0, 1);
+  assert.equal(h.render(), false);
+});
+
+test('main chat opens a confirmation Orb directly and a click submits only once', async () => {
+  const h = await harness();
+  await h.event('ace-tool-confirmation-open', {
+    requestId: 'main-chat-request',
+    message: '앱 종료 작업을 실행할까요?',
+    choices: [
+      { id: 'yes', label: '예, 실행' },
+      { id: 'no', label: '아니오, 취소' },
+    ],
+  });
+  assert.ok(h.render());
+  assert.equal(h.render().props.choices.length, 2);
+  h.render().props.onChoice('no');
+  await h.flush();
+  assert.equal(h.calls.find((c) => c.name === 'respond_voice_choice').args.choiceId, 'no');
+  assert.equal(h.calls.filter((c) => c.name === 'submit_voice_tool_call').length, 0);
+  await h.event('ace-voice-tool-result', {
+    requestId: 'main-chat-request',
+    status: 'SUCCESS',
+    message: '작업을 취소했어요.',
+    choices: [],
+  });
+  await h.advance(3000);
   assert.equal(h.render(), false);
 });
 

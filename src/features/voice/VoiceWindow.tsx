@@ -17,6 +17,7 @@ import {
 import '../../styles/globals.css';
 
 const localPortfolioMode = import.meta.env.VITE_VOICE_MODE === 'local-portfolio';
+const recognitionRetry = '제대로 인식하지 못했습니다. 다시 말씀해주세요.';
 type CaptureMode = 'command' | 'retry' | 'confirmation';
 type RecordingResult = { recordingId: string };
 type ToolResult = {
@@ -37,12 +38,12 @@ type UploadResult = {
 const voiceErrorMessage = (cause: unknown) => {
   const raw = typeof cause === 'string' ? cause : cause instanceof Error ? cause.message : '';
   const errors: Record<string, string> = {
-    VOICE_RECORDING_EMPTY: '음성을 듣지 못했어요. 다시 말씀해 주세요.',
-    VOICE_RECORDING_TOO_SHORT: '말씀을 끝까지 듣지 못했어요. 다시 말씀해 주세요.',
+    VOICE_RECORDING_EMPTY: recognitionRetry,
+    VOICE_RECORDING_TOO_SHORT: recognitionRetry,
     UNAUTHENTICATED: '메인 창에서 다시 로그인해 주세요.',
     AI_SERVER_UNAVAILABLE: '음성 AI 서버가 연결되지 않았어요.',
     LOCAL_STT_NOT_INSTALLED: '로컬 음성 인식 모델을 설치해 주세요.',
-    LOCAL_STT_FAILED: '음성을 인식하지 못했어요. 다시 말씀해 주세요.',
+    LOCAL_STT_FAILED: recognitionRetry,
   };
   return errors[raw] || apiErrorMessage(cause);
 };
@@ -226,10 +227,7 @@ export function VoiceWindow() {
       setRecording(true);
       writeFailure.current = null;
       writeQueue.current = Promise.resolve();
-      const endpoint = new RecordingEndpoint(
-        mode === 'command' ? 10000 : RETRY_LISTEN_MS,
-        mode === 'confirmation' ? 120 : 250,
-      );
+      const endpoint = new RecordingEndpoint(RETRY_LISTEN_MS, mode === 'confirmation' ? 120 : 250);
       let stopping = false;
       const finish = async () => {
         if (stopping || !valid(token) || !recordingActive.current) return;
@@ -246,6 +244,7 @@ export function VoiceWindow() {
           if (!endpoint.hasSpeech) {
             await invoke('cancel_voice_recording');
             if (mode === 'confirmation') retryMode.current = 'confirmation';
+            else if (mode === 'command') retry(recognitionRetry);
             else await close();
             return;
           }
@@ -274,12 +273,7 @@ export function VoiceWindow() {
                 );
             } else if (recognized.portfolioRequested) {
               await submit('file.open', { directory: 'desktop', path: '김환성_포트폴리오.pdf' });
-            } else
-              retry(
-                recognized.transcript
-                  ? `“${recognized.transcript}”로 들었어요. 포트폴리오를 열려면 다시 말씀해 주세요. (5초 안에 시작)`
-                  : '음성을 인식하지 못했어요. 5초 안에 다시 말씀해 주세요.',
-              );
+            } else retry(recognitionRetry);
           } else {
             const accessToken = await requestVoiceAccessToken().catch(async (cause) => {
               await invoke('discard_voice_recording', { recordingId: result.recordingId });
@@ -299,6 +293,10 @@ export function VoiceWindow() {
               conversationId: null,
             });
             if (!valid(token)) return;
+            if (!uploaded.result.transcript?.trim()) {
+              retry(recognitionRetry);
+              return;
+            }
             if (
               uploaded.result.type === 'tool_call' &&
               uploaded.result.tool &&
@@ -310,10 +308,7 @@ export function VoiceWindow() {
           }
         } catch (cause) {
           if (valid(token))
-            retry(
-              `${voiceErrorMessage(cause)} 5초 안에 다시 말씀해 주세요.`,
-              mode === 'confirmation' ? 'confirmation' : 'retry',
-            );
+            retry(voiceErrorMessage(cause), mode === 'confirmation' ? 'confirmation' : 'retry');
         } finally {
           finalizing.current = false;
           startRetryIfReady();
@@ -388,6 +383,23 @@ export function VoiceWindow() {
       updateChoices([]);
       setVisible(false);
       void releaseAudio();
+    });
+    void register<ToolResult>('ace-tool-confirmation-open', async (result) => {
+      const token = ++generation.current;
+      clearTimer();
+      retryMode.current = null;
+      await releaseAudio();
+      await writeQueue.current.catch(() => undefined);
+      await invoke('cancel_voice_recording').catch(() => undefined);
+      if (generation.current !== token) return;
+      open.current = true;
+      setVisible(true);
+      pendingId.current = result.requestId;
+      setText(result.message);
+      updateChoices(result.choices);
+      setVisualState('WAITING_CONFIRMATION');
+      retryMode.current = 'confirmation';
+      startRetryIfReady();
     });
     void register<ToolResult>('ace-voice-tool-result', async (result) => {
       if (!open.current || result.requestId !== pendingId.current) return;

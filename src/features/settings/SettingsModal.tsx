@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
+import appPackage from '../../../package.json';
 import { settingsApi } from '../../api/settings.api';
 import { apiErrorMessage, isCancelled } from '../../api/client';
 import { Modal } from '../../components/Modal';
 import type { AgentSettings, Permission, PermissionPolicy } from '../../types';
 import { PermissionSettings } from './PermissionSettings';
-import { WakeDiagnosticPanel } from '../voice/WakeDiagnosticPanel';
 import { WakeSensitivitySettings } from '../voice/WakeSensitivitySettings';
 import { WakeChimeSettings } from '../voice/WakeChimeSettings';
 export function SettingsModal({
@@ -14,11 +14,11 @@ export function SettingsModal({
   wakeState,
   onTheme,
   onWake,
-  wakeSetupCompleted,
+
   wakeReferenceExists,
-  wakeDefaultAvailable,
+
   wakeModelSource,
-  onWakeModel,
+
   onWakeSetup,
   onTrash,
   onClose,
@@ -168,36 +168,20 @@ export function SettingsModal({
           <span />
         </button>
       </div>
-      <div className="wake-settings-detail">
-        <span>
-          호출어 <strong>ACE</strong>
-        </span>
-        <span>음성 처리는 이 기기에서 수행됩니다.</span>
-        {wakeDefaultAvailable && wakeModelSource === 'personal' && (
-          <button
-            className="settings-navigation"
-            disabled={busy}
-            onClick={() => void update(() => onWakeModel('default'))}
-          >
-            기본 호출로 전환
-          </button>
-        )}
-        {wakeSetupCompleted && wakeModelSource === 'default' && (
-          <button
-            className="settings-navigation"
-            disabled={busy}
-            onClick={() => void update(() => onWakeModel('personal'))}
-          >
-            저장된 개인 보정 사용
-          </button>
-        )}
-        <button className="settings-navigation" onClick={onWakeSetup}>
-          내 목소리에 맞게 보정 (선택)
+      <div className="setting-row wake-personal-row">
+        <div>
+          <strong>음성 호출</strong>
+          <p>
+            녹음 없이 바로 ACE를 불러보세요. 잘 인식되지 않으면 내 목소리로 5번 녹음해 보정할 수
+            있습니다. 녹음은 선택 사항입니다.
+          </p>
+        </div>
+        <button className="wake-record-button" onClick={onWakeSetup}>
+          내 목소리로 ACE 호출어 녹음
         </button>
       </div>
-      {wakeReferenceExists && <WakeSensitivitySettings />}
+      <WakeSensitivitySettings />
       <WakeChimeSettings />
-      {import.meta.env.DEV && <WakeDiagnosticPanel />}
       {!settings ? (
         <p className="state-text">계정 설정 불러오는 중…</p>
       ) : (
@@ -223,7 +207,7 @@ export function SettingsModal({
           <div className="setting-row">
             <div>
               <strong>음성 응답 선호</strong>
-              <p>TTS 선호도만 저장합니다. 음성 출력은 아직 연결되지 않았습니다.</p>
+              <p>채팅 답변을 음성으로 읽어줍니다.</p>
             </div>
             <button
               className={`toggle ${settings.ttsEnabled ? 'on' : ''}`}
@@ -252,7 +236,9 @@ export function SettingsModal({
       <div className="modal-actions">
         <button onClick={onLogout}>로그아웃</button>
       </div>
-      <p className="settings-footnote">ACE 0.1.0 · 계정 데이터는 서버에 저장됩니다.</p>
+      <p className="settings-footnote">
+        ACE {appPackage.version} · © {new Date().getFullYear()} ACE. All rights reserved.
+      </p>
     </Modal>
   );
 }

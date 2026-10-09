@@ -1,21 +1,50 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowDown, Download, FileAudio, FileText, Image, LoaderCircle } from 'lucide-react';
+import {
+  ArrowDown,
+  Check,
+  Copy,
+  Download,
+  FileAudio,
+  FileText,
+  Image,
+  LoaderCircle,
+} from 'lucide-react';
+import type { Message } from '../../types';
 import type { useMessages } from '../../hooks/useMessages';
 import { attachmentsApi } from '../../api/attachments.api';
+// A saved reply is typed only on its first presentation, including when revisiting a room.
+const presentedReplies = new Set<string>();
 export function MessageList({
   query,
   sending,
+  optimistic,
+  animateIds,
 }: {
   query: ReturnType<typeof useMessages>;
   sending: boolean;
+  optimistic?: Message | null;
+  animateIds?: Set<string>;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const previous = useRef<{ height: number; top: number } | null>(null);
   const initialized = useRef(false);
-  const { items: messages } = query;
+  const messages =
+    optimistic && !query.items.some((item) => item.id === optimistic.id)
+      ? [...query.items, optimistic]
+      : query.items;
+  useEffect(() => {
+    const element = ref.current;
+    const content = element?.firstElementChild;
+    if (!element || !content) return;
+    const observer = new ResizeObserver(() => {
+      if (nearBottom.current && !previous.current) element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -51,7 +80,7 @@ export function MessageList({
       }}
     >
       <div className="chat-content message-content">
-        {query.isLoading ? (
+        {query.isLoading && !optimistic ? (
           <p className="state-text">
             <LoaderCircle size={17} className="spin" />
             대화를 불러오는 중…
@@ -90,7 +119,11 @@ export function MessageList({
                 </div>
                 <div className="markdown">
                   {message.role === 'ASSISTANT' ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                    <AssistantContent
+                      id={message.id}
+                      content={message.content}
+                      animate={animateIds?.has(message.id) ?? false}
+                    />
                   ) : (
                     <p>{message.content}</p>
                   )}
@@ -120,10 +153,25 @@ export function MessageList({
               </article>
             ))}
             {sending && (
-              <p className="state-text" role="status">
-                <LoaderCircle size={16} className="spin" />
-                메시지 처리 중…
-              </p>
+              <article
+                className="message assistant thinking-message"
+                role="status"
+                aria-label="ACE가 답변을 생각하는 중"
+              >
+                <div className="message-author">
+                  <img src="/ace-logo.png" alt="" />
+                  ACE
+                </div>
+                <div className="thinking-bubble">
+                  <span className="thinking-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  생각 중…
+                </div>
+                <small>답변을 준비하고 있어요. 원하면 언제든 멈출 수 있어요.</small>
+              </article>
             )}
           </>
         )}
@@ -139,5 +187,64 @@ export function MessageList({
         <ArrowDown size={18} />
       </button>
     </div>
+  );
+}
+
+function AssistantContent({
+  id,
+  content,
+  animate,
+}: {
+  id: string;
+  content: string;
+  animate: boolean;
+}) {
+  const [shouldAnimate] = useState(animate && !presentedReplies.has(id));
+  const [length, setLength] = useState(shouldAnimate ? 0 : Array.from(content).length);
+  const [copyState, setCopyState] = useState('응답 복사');
+  const characters = Array.from(content);
+  useEffect(() => {
+    presentedReplies.add(id);
+    if (!shouldAnimate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setLength(Array.from(content).length);
+      return;
+    }
+    const total = Array.from(content).length;
+    const step = Math.max(1, Math.ceil(total / 180));
+    const timer = setInterval(
+      () =>
+        setLength((current) => {
+          if (current + step >= total) clearInterval(timer);
+          return Math.min(total, current + step);
+        }),
+      20,
+    );
+    return () => clearInterval(timer);
+  }, [content, shouldAnimate, id]);
+  const complete = length >= characters.length;
+  return (
+    <>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {characters.slice(0, length).join('')}
+      </ReactMarkdown>
+      {!complete && <span className="typing-cursor" aria-hidden="true" />}
+      {complete && (
+        <div className="response-actions">
+          <button
+            aria-label="응답 복사"
+            onClick={() =>
+              void navigator.clipboard.writeText(content).then(
+                () => setCopyState('복사됨'),
+                () => setCopyState('복사하지 못했습니다'),
+              )
+            }
+          >
+            {copyState === '복사됨' ? <Check size={14} /> : <Copy size={14} />}
+            {copyState}
+          </button>
+          <span>응답 완료</span>
+        </div>
+      )}
+    </>
   );
 }

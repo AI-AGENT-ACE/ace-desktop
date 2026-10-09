@@ -234,6 +234,33 @@ fn query_reference(value: &Value) -> Result<Vec<String>, &'static str> {
 }
 
 fn app_score(app: &InstalledApp, canonical: Option<&str>, terms: &[String]) -> u16 {
+    // Windows may register both the system launcher and Store Notepad. Prefer only
+    // the trusted built-in launcher for an exact Notepad request, never an arbitrary tie.
+    if canonical
+        .into_iter()
+        .chain(terms.iter().map(String::as_str))
+        .any(|term| {
+            matches!(
+                normalized(term).as_str(),
+                "notepad" | "windowsnotepad" | "메모장"
+            )
+        })
+    {
+        if let Some(windows) = std::env::var_os("WINDIR") {
+            let expected = std::path::PathBuf::from(windows)
+                .join("System32")
+                .join("notepad.exe");
+            let normalize_path = |path: &std::path::Path| {
+                path.to_string_lossy()
+                    .replace('/', "\\")
+                    .trim_start_matches(r"\\?\")
+                    .to_ascii_lowercase()
+            };
+            if normalize_path(&app.executable_path) == normalize_path(&expected) {
+                return 110;
+            }
+        }
+    }
     let name = normalized(&app.name);
     let aliases: Vec<String> = app.aliases.iter().map(|value| normalized(value)).collect();
     let canonical_score = canonical
@@ -406,6 +433,32 @@ fn existing(
         return Err("DIRECTORY_NOT_FOUND");
     }
     if !directory_expected && !path.is_file() {
+        return Err("FILE_NOT_FOUND");
+    }
+    Ok(path)
+}
+fn allowed_absolute_file(value: &str) -> Result<PathBuf, &'static str> {
+    let requested = Path::new(value);
+    if !requested.is_absolute() {
+        return Err("INVALID_ARGUMENT");
+    }
+    let path = requested.canonicalize().map_err(|_| "FILE_NOT_FOUND")?;
+    let allowed = [
+        "desktop",
+        "downloads",
+        "documents",
+        "pictures",
+        "music",
+        "videos",
+    ]
+    .iter()
+    .filter_map(|name| root(name).ok())
+    .filter_map(|base| base.canonicalize().ok())
+    .any(|base| path.starts_with(base));
+    if !allowed {
+        return Err("PATH_NOT_ALLOWED");
+    }
+    if !path.is_file() {
         return Err("FILE_NOT_FOUND");
     }
     Ok(path)
@@ -779,6 +832,8 @@ fn dispatch(
             let o = args(arguments, &["resourceId", "directory", "path"])?;
             let path = if let Some(id) = o.get("resourceId").and_then(Value::as_str) {
                 resource(tool_state, id, false)?
+            } else if !o.contains_key("directory") {
+                allowed_absolute_file(string(o, "path")?)?
             } else {
                 existing(string(o, "directory")?, string(o, "path")?, false)?
             };
@@ -1041,6 +1096,22 @@ mod tests {
         assert_eq!(relative("C:\\secret").unwrap_err(), "PATH_NOT_ALLOWED")
     }
     #[test]
+    fn path_only_file_open_keeps_user_folder_boundary() {
+        assert_eq!(
+            allowed_absolute_file("relative.txt").unwrap_err(),
+            "INVALID_ARGUMENT"
+        );
+        let system_file =
+            PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into()))
+                .join("System32\\notepad.exe");
+        if system_file.is_file() {
+            assert_eq!(
+                allowed_absolute_file(system_file.to_str().unwrap()).unwrap_err(),
+                "PATH_NOT_ALLOWED"
+            );
+        }
+    }
+    #[test]
     fn unexpected_arguments_are_rejected() {
         assert_eq!(
             args(
@@ -1108,6 +1179,35 @@ mod tests {
             validated_terms("앱", &vec!["x".into(); 6]).unwrap_err(),
             "INVALID_CANDIDATES"
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn notepad_prefers_trusted_system_launcher_over_store_alias() {
+        let mut system = app("Notepad", &["notepad", "메모장"]);
+        system.executable_path = std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap())
+            .join("System32/notepad.exe");
+        let store = app("Notepad", &["notepad", "메모장"]);
+        let result = resolve_application(
+            &[store, system.clone()],
+            Some("notepad"),
+            &["notepad".into()],
+        )
+        .unwrap();
+        assert_eq!(result.executable_path, system.executable_path);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn discovered_notepad_resolves_without_launching_an_application() {
+        let registry = crate::local_commands::discover_apps();
+        let expected = PathBuf::from(std::env::var_os("WINDIR").unwrap())
+            .join("System32/notepad.exe")
+            .canonicalize()
+            .unwrap();
+        for name in ["notepad", "메모장"] {
+            let resolved = resolve_application(&registry, Some(name), &[name.to_owned()]).unwrap();
+            assert_eq!(resolved.executable_path.canonicalize().unwrap(), expected);
+        }
     }
     #[test]
     fn known_folder_candidates_resolve_in_korean_and_english() {

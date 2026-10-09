@@ -19,7 +19,7 @@ async function mockMain(page: Page) {
     const path = new URL(route.request().url()).pathname;
     const data =
       path === '/health'
-        ? { ai: 'not-configured' }
+        ? { ai: 'not_configured' }
         : path === '/users/me'
           ? user
           : path === '/settings'
@@ -31,6 +31,60 @@ async function mockMain(page: Page) {
 async function fillLogin(page: Page) {
   await page.getByLabel('이메일', { exact: true }).fill(user.email);
   await page.getByLabel('비밀번호', { exact: true }).fill('TestPassword123!');
+}
+
+for (const ai of ['connected', 'unavailable']) {
+  test(`AI ${ai} 상태에서도 메시지를 저장만 하지 않고 agent로 보낸다`, async ({ page }) => {
+    await mockMain(page);
+    const conversation = {
+      id: 'test-conversation',
+      title: '테스트 대화',
+      createdAt: '',
+      updatedAt: '',
+      isPinned: false,
+    };
+    await page.route('**/auth/login', (route) => route.fulfill({ json: { ...tokens, user } }));
+    await page.route('**/health', (route) => route.fulfill({ json: { ai } }));
+    await page.route('**/conversations', (route) =>
+      route.fulfill({
+        json:
+          route.request().method() === 'POST'
+            ? conversation
+            : { items: [], hasMore: false, nextCursor: null },
+      }),
+    );
+    await page.route('**/conversations/test-conversation', (route) =>
+      route.fulfill({ json: conversation }),
+    );
+    let turns = 0;
+    await page.route('**/conversations/test-conversation/messages', (route) =>
+      route.fulfill({
+        json:
+          route.request().method() === 'POST'
+            ? {
+                id: 'saved-user',
+                conversationId: conversation.id,
+                role: 'USER',
+                content: '안녕하세요',
+                attachments: [],
+                createdAt: '',
+              }
+            : { items: [], hasMore: false, nextCursor: null },
+      }),
+    );
+    await page.route('**/agent/turns', (route) => {
+      turns++;
+      return route.fulfill({
+        json: { conversationId: conversation.id, message: null, toolCalls: [] },
+      });
+    });
+    await page.goto('/');
+    await fillLogin(page);
+    await page.getByRole('button', { name: '로그인', exact: true }).click();
+    await page.getByRole('textbox', { name: '메시지', exact: true }).fill('안녕하세요');
+    await page.getByRole('button', { name: '메시지 보내기', exact: true }).click();
+    await expect.poll(() => turns).toBe(1);
+  });
 }
 
 test('미인증에서는 메인 API를 호출하지 않고 작은 창과 다크 테마를 지원한다', async ({ page }) => {

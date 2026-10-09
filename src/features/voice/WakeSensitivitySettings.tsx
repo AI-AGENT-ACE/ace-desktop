@@ -46,8 +46,14 @@ export function WakeSensitivitySettings() {
     }
   };
   return (
-    <div className="wake-settings-detail">
-      <label htmlFor="wake-sensitivity">호출 감도</label>
+    <div className="setting-row">
+      <div>
+        <label htmlFor="wake-sensitivity">
+          <strong>호출 감도</strong>
+        </label>
+        <p>ACE 호출어 감지 민감도를 조정할 수 있습니다.</p>
+        {message && <p role="status">{message}</p>}
+      </div>
       <select
         id="wake-sensitivity"
         value={value}
@@ -55,13 +61,8 @@ export function WakeSensitivitySettings() {
         onChange={(event) => void change(event.target.value as Sensitivity)}
       >
         <option value="standard">기본</option>
-        <option value="sensitive">민감하게 — 여러 번 불러야 할 때</option>
+        <option value="sensitive">민감하게</option>
       </select>
-      <p>
-        잘 반응하지 않으면 ‘민감하게’를 선택하세요. 다른 말에도 반응하면 ‘기본’으로 되돌릴 수
-        있습니다.
-      </p>
-      {message && <p role="status">{message}</p>}
     </div>
   );
 }

@@ -85,7 +85,6 @@ const messages: Record<string, string> = {
   EMAIL_ALREADY_REGISTERED: '이미 가입된 이메일입니다.',
   AI_NOT_CONFIGURED: 'AI 서버가 아직 연결되지 않았습니다. 입력한 메시지는 서버에 저장됩니다.',
   AI_UNAVAILABLE: 'AI 서버에 연결하지 못했습니다. 저장된 메시지를 확인해 주세요.',
-  WEATHER_NOT_CONFIGURED: '날씨 API Key가 설정되지 않았습니다.',
   RATE_LIMITED: '요청이 많습니다. 잠시 후 다시 시도해 주세요.',
   TOOL_PERMISSION_DENIED: '설정에서 허용하지 않은 기능입니다.',
   UNAUTHENTICATED: '로그인이 만료되었습니다. 다시 로그인해 주세요.',

@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   AudioLines,
   Check,
-  CloudSun,
   CircleAlert,
   LoaderCircle,
   PanelLeftOpen,
@@ -44,16 +43,20 @@ import {
   localPolicy,
   systemAdapter,
   toolRequest,
+  toolLabel,
 } from './features/system-actions/adapters/systemAdapter';
 import { conversationApi } from './api/conversations.api';
 import { messagesApi } from './api/messages.api';
 import { attachmentsApi } from './api/attachments.api';
+import { settingsApi } from './api/settings.api';
 import { agentApi } from './api/agent.api';
+import { speakAssistant, stopSpeech } from './api/speech.api';
 import { recordVoiceLog } from './api/voice.api';
 import { apiErrorMessage, isCancelled } from './api/client';
 import { useConversations } from './hooks/useConversations';
 import { useMessages } from './hooks/useMessages';
 import type {
+  Message,
   Conversation,
   SystemActionRequest,
   SystemActionStatus,
@@ -61,6 +64,7 @@ import type {
   User,
 } from './types';
 import './styles/globals.css';
+import './styles/chat-experience.css';
 import './styles/motion.css';
 
 type Action = { status: SystemActionStatus; message: string };
@@ -69,6 +73,7 @@ type PendingAction = {
   call?: ToolCall;
   voice: boolean;
   voiceRequestId?: string;
+  permission?: { denied: boolean; requiresConfirmation: boolean };
 };
 type VoiceChoice = { id: string; label: string };
 const reportVoice = (
@@ -90,6 +95,21 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const [active, setActive] = useState<string | null>(null);
   const [draftVersion, setDraftVersion] = useState(0);
   const messages = useMessages(active);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const appendRef = useRef(messages.append);
+  appendRef.current = messages.append;
+  const [optimistic, setOptimistic] = useState<Message | null>(null);
+  const [animateIds, setAnimateIds] = useState<Set<string>>(() => new Set());
+  const sendAbort = useRef<AbortController | null>(null);
+  const animateReply = (message: Message | null) => {
+    if (message) setAnimateIds((previous) => new Set([...previous, message.id]));
+  };
+  const stopSend = () => {
+    sendAbort.current?.abort();
+    stopSpeech();
+  };
+
   const [collapsed, setCollapsed] = useState(false);
   const sidebarPanel = useRef<HTMLDivElement>(null);
   const expandSidebar = useRef<HTMLButtonElement>(null);
@@ -136,12 +156,14 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     const controller = new AbortController();
     agentApi
       .health(controller.signal)
-      .then((data) => setAiReady(data.ai === 'configured'))
+      .then((data) => setAiReady(data.ai !== 'not_configured'))
       .catch((cause) => {
         if (!isCancelled(cause)) setNotice(apiErrorMessage(cause));
       });
     return () => {
       mounted.current = false;
+      stopSpeech();
+      sendAbort.current?.abort();
       controller.abort();
     };
   }, []);
@@ -195,20 +217,35 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           '요청을 확인하고 있어요.',
         );
         const riskLevel = localPolicy(payload.tool);
-        setPending((previous) => [
-          ...previous,
-          {
-            request: {
-              contractVersion: '1.1',
-              commandType: payload.tool,
-              arguments: payload.arguments,
-              riskLevel,
-              label: payload.tool,
-            },
-            voice: true,
-            voiceRequestId: payload.requestId,
-          },
-        ]);
+        void settingsApi
+          .permissions()
+          .then((preferences) => {
+            if (cancelledVoice.current.has(payload.requestId) || !mounted.current) return;
+            const permission = preferences.find((value) => value.toolName === payload.tool);
+            setPending((previous) => [
+              ...previous,
+              {
+                request: {
+                  contractVersion: '1.1',
+                  commandType: payload.tool,
+                  arguments: payload.arguments,
+                  riskLevel,
+                  label: toolLabel(payload.tool, payload.arguments),
+                },
+                voice: true,
+                voiceRequestId: payload.requestId,
+                permission,
+              },
+            ]);
+          })
+          .catch(
+            () =>
+              void reportVoice(
+                { voice: true, voiceRequestId: payload.requestId },
+                'ERROR',
+                '권한 설정을 확인하지 못했습니다. 다시 시도해 주세요.',
+              ),
+          );
       },
     );
     void register<{ requestId: string; choiceId: string }>('ace-voice-choice', (payload) =>
@@ -290,12 +327,14 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   const startNewChat = () => {
     if (busy) return;
     setActive(null);
+    setOptimistic(null);
     setDraftVersion((version) => version + 1);
     setNotice('');
   };
   const reconcile = async (id: string) => {
     const page = await messagesApi.list(id);
-    if (mounted.current && id === active) page.items.slice().reverse().forEach(messages.append);
+    if (mounted.current && id === activeRef.current)
+      page.items.slice().reverse().forEach(appendRef.current);
     return page.items;
   };
   const send = async (
@@ -304,79 +343,79 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     onProgress: (progress: UploadProgress) => void = () => undefined,
   ): Promise<boolean> => {
     if (lock.current) return false;
+    if (text.length > 10000) {
+      setNotice('메시지는 10,000자 이내로 입력해 주세요.');
+      return false;
+    }
     lock.current = true;
+    const abort = new AbortController();
+    sendAbort.current = abort;
     setSending(true);
     let id = active;
-    const known = new Set(messages.items.map((message) => message.id));
+    let saved: Message | null = null;
     const uploaded: string[] = [];
+    setOptimistic({
+      id: 'pending-' + crypto.randomUUID(),
+      conversationId: id || 'pending',
+      role: 'USER',
+      attachments: [],
+      content: text,
+      createdAt: new Date().toISOString(),
+    });
     try {
       if (!id) {
         const conversation = await conversationApi.create();
         id = conversation.id;
         conversations.upsert(conversation);
+        setActive(id);
+        setOptimistic((previous) => (previous ? { ...previous, conversationId: id! } : null));
       }
       for (let index = 0; index < files.length; index += 1) {
         onProgress({ index, status: 'uploading', progress: 0 });
-        try {
-          const attachment = await attachmentsApi.upload(id, files[index], (progress) =>
-            onProgress({ index, status: 'uploading', progress }),
-          );
-          uploaded.push(attachment.id);
-          onProgress({ index, status: 'uploaded', progress: 100 });
-        } catch (cause) {
-          onProgress({ index, status: 'failed', progress: 0, error: apiErrorMessage(cause) });
-          await Promise.allSettled(
-            uploaded.map((attachmentId) => attachmentsApi.remove(attachmentId)),
-          );
-          throw cause;
-        }
+        const attachment = await attachmentsApi.upload(id, files[index], (progress) =>
+          onProgress({ index, status: 'uploading', progress }),
+        );
+        uploaded.push(attachment.id);
+        onProgress({ index, status: 'uploaded', progress: 100 });
       }
-      const configured = aiReady ?? (await agentApi.health()).ai === 'configured';
+      // Persist the user bubble independently. Stopping AI must not undo the sent message.
+      saved = await messagesApi.create(id, text, uploaded);
+      setOptimistic(saved);
+      appendRef.current(saved);
+      conversations.upsert(await conversationApi.get(id));
+      if (abort.signal.aborted) return true;
+      const configured = aiReady ?? (await agentApi.health()).ai !== 'not_configured';
       setAiReady(configured);
-      if (configured) {
-        const turn = await agentApi.turn(id, text, uploaded);
+      if (configured && text.trim()) {
+        const turn = await agentApi.turn(id, text, [], saved.id, abort.signal);
+        if (abort.signal.aborted || !mounted.current) return true;
+        animateReply(turn.message);
+        if (turn.message) {
+          appendRef.current(turn.message);
+          void speakAssistant(turn.message.content).catch(() =>
+            setNotice('답변은 저장했지만 음성 재생에 실패했습니다.'),
+          );
+        }
         await reconcile(id);
-        if (mounted.current)
-          setPending((previous) => [
-            ...previous,
-            ...turn.toolCalls.map((call) => ({ call, voice: false })),
-          ]);
-      } else {
-        const saved = await messagesApi.create(id, text, uploaded);
-        if (id === active) messages.append(saved);
-        setNotice('메시지를 저장했습니다. AI 응답은 AI 서버 연결 후 사용할 수 있습니다.');
-      }
-      if (mounted.current) {
-        setActive(id);
+        if (abort.signal.aborted) return true;
+        setPending((previous) => [
+          ...previous,
+          ...turn.toolCalls.map((call) => ({ call, voice: false })),
+        ]);
         conversations.upsert(await conversationApi.get(id));
-      }
+      } else if (!configured)
+        setNotice('메시지를 저장했습니다. AI 서버 연결 후 답변을 받을 수 있습니다.');
       return true;
     } catch (cause) {
+      if (abort.signal.aborted && saved) return true;
       if (mounted.current) setNotice(apiErrorMessage(cause));
-      // An AI failure can happen after the USER message was committed. Never retry the POST blindly.
-      if (id) {
-        try {
-          const saved = await reconcile(id);
-          if (
-            saved.some(
-              (message) =>
-                message.role === 'USER' && message.content === text && !known.has(message.id),
-            )
-          ) {
-            if (mounted.current) {
-              setActive(id);
-              conversations.upsert(await conversationApi.get(id));
-            }
-            return true;
-          }
-        } catch {
-          /* Keep the original send error and the draft. */
-        }
-      }
+      if (saved) return true;
+      setOptimistic(null);
       await Promise.allSettled(uploaded.map((attachmentId) => attachmentsApi.remove(attachmentId)));
       return false;
     } finally {
       lock.current = false;
+      sendAbort.current = null;
       if (mounted.current) setSending(false);
     }
   };
@@ -414,6 +453,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           return;
         }
         const turn = await agentApi.cloud(item.call, true);
+        animateReply(turn.message);
+        if (turn.message)
+          void speakAssistant(turn.message.content).catch(() =>
+            setNotice('음성 재생에 실패했습니다.'),
+          );
         await reconcile(turn.conversationId);
         setPending((previous) => [
           ...previous,
@@ -487,6 +531,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           const turn = await agentApi.local(item.call, status, approved, duration, {
             summary: result.success ? 'Local command completed' : 'Local command did not complete',
           });
+          animateReply(turn.message);
+          if (turn.message)
+            void speakAssistant(turn.message.content).catch(() =>
+              setNotice('음성 재생에 실패했습니다.'),
+            );
           await reconcile(turn.conversationId);
           setPending((previous) => [
             ...previous,
@@ -525,9 +574,13 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       if (request.riskLevel === 'BLOCKED') {
         setAction({ status: 'error', message: '지원하지 않거나 차단된 명령입니다. (BLOCKED)' });
         await logVoice(request, 'FAILED', 0, 'BLOCKED');
-      } else if (request.riskLevel === 'CONFIRM')
-        setPending((previous) => [...previous, { request, voice: true }]);
-      else await execute({ request, voice: true }, true);
+      } else {
+        const preferences = await settingsApi.permissions();
+        const permission = preferences.find((value) => value.toolName === request.commandType);
+        setPending((previous) => [...previous, { request, voice: true, permission }]);
+      }
+    } catch (cause) {
+      setAction({ status: 'error', message: apiErrorMessage(cause) });
     } finally {
       voiceLock.current = false;
     }
@@ -538,8 +591,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     (current?.call?.executionLocation === 'LOCAL' ? toolRequest(current.call).riskLevel : 'SAFE');
   const needsConfirmation =
     !current?.call?.denied &&
+    !current?.permission?.denied &&
     risk !== 'BLOCKED' &&
-    (risk === 'CONFIRM' || current?.call?.requiresConfirmation);
+    (risk === 'CONFIRM' ||
+      current?.call?.requiresConfirmation ||
+      current?.permission?.requiresConfirmation);
   voiceChoiceHandler.current = (id, choice) => {
     if (cancelledVoice.current.has(id) || executionLock.current) return;
     const search = voiceSearchChoices.current.get(id);
@@ -552,10 +608,26 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       const selected = search.find((value) => value.id === choice);
       if (!selected) return;
       voiceSearchChoices.current.delete(id);
-      setPending((previous) => [
-        ...previous,
-        { voice: true, voiceRequestId: id, request: selected.request },
-      ]);
+      void settingsApi
+        .permissions()
+        .then((preferences) => {
+          if (cancelledVoice.current.has(id) || !mounted.current) return;
+          const permission = preferences.find(
+            (value) => value.toolName === selected.request.commandType,
+          );
+          setPending((previous) => [
+            ...previous,
+            { voice: true, voiceRequestId: id, request: selected.request, permission },
+          ]);
+        })
+        .catch(
+          () =>
+            void reportVoice(
+              { voice: true, voiceRequestId: id },
+              'ERROR',
+              '권한 설정을 확인하지 못했습니다. 다시 시도해 주세요.',
+            ),
+        );
     } else if (
       current?.voiceRequestId === id &&
       needsConfirmation &&
@@ -566,23 +638,37 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   };
   useEffect(() => {
     if (!current) return;
-    if (current.call?.denied) {
+    if (current.call?.denied || current.permission?.denied) {
       void reportVoice(current, 'ERROR', '설정에서 허용하지 않은 기능입니다.');
       setAction({ status: 'error', message: '설정에서 허용하지 않은 기능입니다.' });
       setPending((previous) => previous.filter((candidate) => candidate !== current));
       return;
     }
     if (!needsConfirmation) void execute(current, risk !== 'BLOCKED');
-    else
-      void reportVoice(
-        current,
-        'WAITING_CONFIRMATION',
-        `${current.request?.label || current.call?.tool} 작업을 실행할까요?`,
-        [
-          { id: 'yes', label: '네, 실행' },
+    else if (isTauri()) {
+      if (!current.voiceRequestId) {
+        setPending((previous) =>
+          previous.map((item) =>
+            item === current ? { ...item, voiceRequestId: crypto.randomUUID() } : item,
+          ),
+        );
+        return;
+      }
+      void invoke('request_tool_confirmation', {
+        requestId: current.voiceRequestId,
+        message:
+          (current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)) +
+          ' 작업을 실행할까요?',
+        choices: [
+          { id: 'yes', label: '예, 실행' },
           { id: 'no', label: '아니오, 취소' },
         ],
-      );
+      }).catch((cause) => {
+        setNotice(apiErrorMessage(cause));
+        // An unavailable confirmation surface must never implicitly approve an action.
+        void execute(current, false);
+      });
+    }
   }, [current, needsConfirmation, risk]);
   const openVoice = async () => {
     if (isTauri()) {
@@ -666,8 +752,14 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
               ACE <span className="header-subtitle">Personal assistant</span>
             </span>
           </header>
-          {active ? (
-            <MessageList key={`messages-${active}`} query={messages} sending={sending} />
+          {active || optimistic ? (
+            <MessageList
+              key={active || 'pending'}
+              query={messages}
+              sending={sending}
+              optimistic={optimistic?.conversationId === active || !active ? optimistic : null}
+              animateIds={animateIds}
+            />
           ) : (
             <div className="welcome">
               <div className="welcome-inner">
@@ -683,12 +775,6 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 </p>
                 <div className="suggestions">
                   {[
-                    {
-                      icon: CloudSun,
-                      label: '오늘 날씨 알아보기',
-                      onClick: () => void send('오늘 날씨 알려줘'),
-                      sub: '오늘의 날씨를 물어보세요',
-                    },
                     {
                       icon: SlidersHorizontal,
                       label: '환경 설정하기',
@@ -737,6 +823,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           <ChatComposer
             key={`composer-${active || `draft-${draftVersion}`}`}
             onSend={send}
+            sending={sending}
+            onStop={stopSend}
             onVoice={() => void openVoice()}
             busy={busy || (!!active && messages.isLoading)}
           />
@@ -809,27 +897,15 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           </form>
         </Modal>
       )}
-      {current && needsConfirmation && (
-        <Modal title="시스템 명령 실행 확인" onClose={() => void execute(current, false)}>
-          <p className="modal-description">ACE가 다음 작업을 실행하려고 합니다.</p>
-          <div className="command-preview">{current.request?.label || current.call?.tool}</div>
-          <p className="modal-description">승인하면 실제 작업이 실행됩니다.</p>
-          <div className="modal-actions">
-            <button
-              disabled={action?.status === 'pending'}
-              onClick={() => void execute(current, false)}
-            >
-              취소
-            </button>
-            <button
-              className="primary"
-              disabled={action?.status === 'pending'}
-              onClick={() => void execute(current, true)}
-            >
-              실행
-            </button>
-          </div>
-        </Modal>
+      {current && needsConfirmation && !isTauri() && (
+        <div className="inline-tool-confirmation" role="group" aria-label="도구 실행 확인">
+          <p>
+            {current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)}{' '}
+            작업을 실행할까요?
+          </p>
+          <button onClick={() => void execute(current, true)}>예</button>
+          <button onClick={() => void execute(current, false)}>아니오</button>
+        </div>
       )}
       {notice && (
         <div className="toast" role="status">
