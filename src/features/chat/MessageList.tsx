@@ -21,11 +21,13 @@ export function MessageList({
   sending,
   optimistic,
   animateIds,
+  onReplyComplete,
 }: {
   query: ReturnType<typeof useMessages>;
   sending: boolean;
   optimistic?: Message | null;
   animateIds?: Set<string>;
+  onReplyComplete?: (id: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -135,6 +137,7 @@ export function MessageList({
                         id={message.id}
                         content={message.content}
                         animate={animateIds?.has(message.id) ?? false}
+                        onComplete={onReplyComplete}
                       />
                     ) : (
                       <p>{message.content}</p>
@@ -211,10 +214,12 @@ function AssistantContent({
   id,
   content,
   animate,
+  onComplete,
 }: {
   id: string;
   content: string;
   animate: boolean;
+  onComplete?: (id: string) => void;
 }) {
   const [shouldAnimate] = useState(animate && !presentedReplies.has(id));
   const [length, setLength] = useState(shouldAnimate ? 0 : Array.from(content).length);
@@ -239,6 +244,9 @@ function AssistantContent({
     return () => clearInterval(timer);
   }, [content, shouldAnimate, id]);
   const complete = length >= characters.length;
+  useEffect(() => {
+    if (complete) onComplete?.(id);
+  }, [complete, id, onComplete]);
   return (
     <>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>

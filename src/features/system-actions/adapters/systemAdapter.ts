@@ -84,6 +84,25 @@ export function toolLabel(tool: string, args: Record<string, unknown> = {}): str
   const target = args.original ?? args.appName ?? args.canonicalId ?? args.path;
   return `${names[tool] || tool}${typeof target === 'string' ? ` · ${target.slice(0, 80)}` : ''}`;
 }
+function objectParticle(value: string): string {
+  const characters = Array.from(value.trim());
+  const last = characters[characters.length - 1];
+  const code = last?.charCodeAt(0) ?? 0;
+  return code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0 ? '을' : '를';
+}
+export function confirmationPrompt(request: SystemActionRequest): string {
+  const args = request.arguments;
+  const rawTarget = args.appName ?? args.original ?? args.canonicalId ?? args.path;
+  const target = typeof rawTarget === 'string' ? rawTarget.trim() : '';
+  if (target && request.commandType === 'app.open')
+    return `${target}${objectParticle(target)} 실행할까요?`;
+  if (target && request.commandType === 'app.close')
+    return `${target}${objectParticle(target)} 종료할까요?`;
+  if (target && request.commandType === 'file.delete')
+    return `${target}${objectParticle(target)} 삭제할까요?`;
+  if (request.commandType === 'system.lock') return '화면을 잠글까요?';
+  return `${request.label} 작업을 진행할까요?`;
+}
 export function toolRequest(call: ToolCall): SystemActionRequest {
   return {
     contractVersion: call.version || '1.1',

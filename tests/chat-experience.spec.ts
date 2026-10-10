@@ -90,6 +90,11 @@ test('보낸 메시지는 즉시 보이고 취소 후 남으며 다음 응답은
   const input = page.getByRole('textbox', { name: '메시지', exact: true });
   await input.fill('첫 번째 요청');
   await page.getByRole('button', { name: '메시지 보내기', exact: true }).click();
+  await expect(input).toHaveValue('');
+  await expect(input).toBeEnabled();
+  await input.fill('답변을 기다리는 동안 작성');
+  await expect(page.getByRole('button', { name: '메시지 보내기', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '답변 생성 중지' })).toBeEnabled();
   await expect(page.locator('.message.user .markdown')).toHaveText('첫 번째 요청');
   await expect(page.getByText('답변을 준비하고 있어요. 원하면 언제든 멈출 수 있어요.')).toHaveCount(
     0,
@@ -107,8 +112,12 @@ test('보낸 메시지는 즉시 보이고 취소 후 남으며 다음 응답은
   await input.fill('두 번째 요청');
   await page.getByRole('button', { name: '메시지 보내기', exact: true }).click();
   await expect(page.locator('.typing-cursor')).toBeVisible();
+  await expect(input).toBeEnabled();
+  await input.fill('답변을 마친 뒤 보낼 내용');
+  await expect(page.getByRole('button', { name: '메시지 보내기', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: '응답 복사' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '응답 복사' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '메시지 보내기', exact: true })).toBeEnabled();
   await expect(page.locator('.message.user')).toHaveCount(2);
   await expect(page.getByText('app.open: SUCCEEDED')).toHaveCount(0);
   await expect(page.locator('.response-divider')).toHaveText('|');
@@ -197,7 +206,7 @@ test('메인 채팅 승인은 오른쪽 위에 표시하며 성공 배너와 도
           {
             id: 'tool',
             tool: 'app.open',
-            arguments: { appName: 'notepad' },
+            arguments: { appName: '메모장' },
             executionLocation: 'CLOUD',
             requiresConfirmation: true,
             denied: false,
@@ -222,7 +231,7 @@ test('메인 채팅 승인은 오른쪽 위에 표시하며 성공 배너와 도
   await page.goto('/');
   await page.getByRole('textbox', { name: '메시지', exact: true }).fill('메모장 열어줘');
   await page.getByRole('button', { name: '메시지 보내기', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: '실행을 허용할까요?' });
+  const dialog = page.getByRole('dialog', { name: '메모장을 실행할까요?' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: '허용', exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: '취소', exact: true })).toBeFocused();

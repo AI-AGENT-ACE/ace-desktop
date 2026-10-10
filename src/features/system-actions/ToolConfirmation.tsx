@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
 
 export function ToolConfirmation({
-  label,
+  prompt,
   busy,
   onChoose,
 }: {
-  label: string;
+  prompt: string;
   busy: boolean;
   onChoose: (approved: boolean) => void;
 }) {
@@ -30,8 +30,7 @@ export function ToolConfirmation({
         }
       }}
     >
-      <strong id="tool-confirmation-title">실행을 허용할까요?</strong>
-      <p>{label}</p>
+      <strong id="tool-confirmation-title">{prompt}</strong>
       <div>
         <button disabled={busy} onClick={() => onChoose(true)}>
           허용

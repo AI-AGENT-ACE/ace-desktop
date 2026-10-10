@@ -43,6 +43,7 @@ import {
   systemAdapter,
   toolRequest,
   toolLabel,
+  confirmationPrompt,
 } from './features/system-actions/adapters/systemAdapter';
 import { conversationApi } from './api/conversations.api';
 import { messagesApi } from './api/messages.api';
@@ -100,10 +101,20 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   appendRef.current = messages.append;
   const [optimistic, setOptimistic] = useState<Message | null>(null);
   const [animateIds, setAnimateIds] = useState<Set<string>>(() => new Set());
+  const [typingReplyIds, setTypingReplyIds] = useState<Set<string>>(() => new Set());
   const sendAbort = useRef<AbortController | null>(null);
   const animateReply = (message: Message | null) => {
-    if (message) setAnimateIds((previous) => new Set([...previous, message.id]));
+    if (!message) return;
+    setAnimateIds((previous) => new Set([...previous, message.id]));
+    setTypingReplyIds((previous) => new Set([...previous, message.id]));
   };
+  const finishReply = (id: string) =>
+    setTypingReplyIds((previous) => {
+      if (!previous.has(id)) return previous;
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
   const stopSend = () => {
     sendAbort.current?.abort();
     stopSpeech();
@@ -655,9 +666,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       }
       void invoke('request_tool_confirmation', {
         requestId: current.voiceRequestId,
-        message:
-          (current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)) +
-          ' 작업을 실행할까요?',
+        message: confirmationPrompt(current.request || toolRequest(current.call!)),
         choices: [
           { id: 'yes', label: '네' },
           { id: 'no', label: '아니오' },
@@ -692,7 +701,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       setNotice(apiErrorMessage(cause));
     }
   };
-  const busy = mutating || sending || !!current || action?.status === 'pending';
+  const busy =
+    mutating || sending || !!current || action?.status === 'pending' || typingReplyIds.size > 0;
   const changeWakeModel = async (source: 'default' | 'personal') => {
     try {
       const settings = await invoke<WakeSetupStatus['settings']>('set_wake_word_model', { source });
@@ -758,6 +768,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
               sending={sending}
               optimistic={optimistic?.conversationId === active || !active ? optimistic : null}
               animateIds={animateIds}
+              onReplyComplete={finishReply}
             />
           ) : (
             <div className="welcome">
@@ -893,7 +904,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       {current && needsConfirmation && (!current.voice || !isTauri()) && (
         <ToolConfirmation
           key={current.call?.id || current.voiceRequestId || 'main'}
-          label={current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)}
+          prompt={confirmationPrompt(current.request || toolRequest(current.call!))}
           busy={action?.status === 'pending'}
           onChoose={(approved) => void execute(current, approved)}
         />
