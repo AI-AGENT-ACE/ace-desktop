@@ -1,4 +1,6 @@
 .message.user {
+  position: relative;
+  margin-bottom: 48px;
   width: fit-content;
   max-width: 85%;
   margin-left: auto;
@@ -60,10 +62,93 @@
 .response-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   margin-top: 18px;
   color: var(--muted);
   font-size: 11px;
+}
+.message-scroll-shell {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.message-scroll-shell > .message-area {
+  height: 100%;
+}
+.message-scroll-shell > .jump-bottom {
+  position: absolute;
+  bottom: 12px;
+  z-index: 2;
+}
+.user-copy-actions {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  height: 34px;
+  padding-top: 4px;
+  opacity: 0;
+  pointer-events: none;
+}
+.user-copy-actions button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.message.user:hover .user-copy-actions,
+.message.user:focus-within .user-copy-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .user-copy-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.response-divider {
+  color: var(--border);
+}
+.main-tool-confirmation {
+  position: fixed;
+  top: 52px;
+  right: 20px;
+  z-index: 80;
+  width: min(320px, calc(100vw - 40px));
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--background);
+  color: var(--text);
+  box-shadow: 0 8px 28px #0002;
+}
+.main-tool-confirmation p {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 10px 0 16px;
+}
+.main-tool-confirmation > div {
+  display: grid;
+  gap: 8px;
+}
+.main-tool-confirmation button {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.main-tool-confirmation button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 .response-actions button {
   display: flex;

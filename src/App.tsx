@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   AudioLines,
-  Check,
   CircleAlert,
-  LoaderCircle,
   PanelLeftOpen,
   SlidersHorizontal,
   X,
@@ -15,6 +13,7 @@ import { CustomTitleBar } from './layouts/CustomTitleBar';
 import { Sidebar } from './layouts/Sidebar';
 import { Modal } from './components/Modal';
 import { ChatComposer, type UploadProgress } from './features/chat/ChatComposer';
+import { ToolConfirmation } from './features/system-actions/ToolConfirmation';
 
 type WakeRuntimeState = 'disabled' | 'starting' | 'listening' | 'triggered' | 'paused' | 'error';
 type WakeRuntimeStatus = {
@@ -44,6 +43,7 @@ import {
   systemAdapter,
   toolRequest,
   toolLabel,
+  confirmationPrompt,
 } from './features/system-actions/adapters/systemAdapter';
 import { conversationApi } from './api/conversations.api';
 import { messagesApi } from './api/messages.api';
@@ -101,10 +101,20 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
   appendRef.current = messages.append;
   const [optimistic, setOptimistic] = useState<Message | null>(null);
   const [animateIds, setAnimateIds] = useState<Set<string>>(() => new Set());
+  const [typingReplyIds, setTypingReplyIds] = useState<Set<string>>(() => new Set());
   const sendAbort = useRef<AbortController | null>(null);
   const animateReply = (message: Message | null) => {
-    if (message) setAnimateIds((previous) => new Set([...previous, message.id]));
+    if (!message) return;
+    setAnimateIds((previous) => new Set([...previous, message.id]));
+    setTypingReplyIds((previous) => new Set([...previous, message.id]));
   };
+  const finishReply = (id: string) =>
+    setTypingReplyIds((previous) => {
+      if (!previous.has(id)) return previous;
+      const next = new Set(previous);
+      next.delete(id);
+      return next;
+    });
   const stopSend = () => {
     sendAbort.current?.abort();
     stopSpeech();
@@ -645,7 +655,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       return;
     }
     if (!needsConfirmation) void execute(current, risk !== 'BLOCKED');
-    else if (isTauri()) {
+    else if (current.voice && isTauri()) {
       if (!current.voiceRequestId) {
         setPending((previous) =>
           previous.map((item) =>
@@ -656,12 +666,10 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       }
       void invoke('request_tool_confirmation', {
         requestId: current.voiceRequestId,
-        message:
-          (current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)) +
-          ' 작업을 실행할까요?',
+        message: confirmationPrompt(current.request || toolRequest(current.call!)),
         choices: [
-          { id: 'yes', label: '예, 실행' },
-          { id: 'no', label: '아니오, 취소' },
+          { id: 'yes', label: '네' },
+          { id: 'no', label: '아니오' },
         ],
       }).catch((cause) => {
         setNotice(apiErrorMessage(cause));
@@ -693,7 +701,8 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
       setNotice(apiErrorMessage(cause));
     }
   };
-  const busy = mutating || sending || !!current || action?.status === 'pending';
+  const busy =
+    mutating || sending || !!current || action?.status === 'pending' || typingReplyIds.size > 0;
   const changeWakeModel = async (source: 'default' | 'personal') => {
     try {
       const settings = await invoke<WakeSetupStatus['settings']>('set_wake_word_model', { source });
@@ -759,6 +768,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
               sending={sending}
               optimistic={optimistic?.conversationId === active || !active ? optimistic : null}
               animateIds={animateIds}
+              onReplyComplete={finishReply}
             />
           ) : (
             <div className="welcome">
@@ -799,17 +809,11 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
               </div>
             </div>
           )}
-          {action && (
+          {action?.status === 'error' && (
             <div className={`system-action ${action.status}`} role="status">
-              {action.status === 'pending' ? (
-                <LoaderCircle size={17} className="spin" />
-              ) : action.status === 'success' ? (
-                <Check size={17} />
-              ) : (
-                <CircleAlert size={17} />
-              )}
+              <CircleAlert size={17} />
               <span>{action.message}</span>
-              {action.status !== 'pending' && (
+              {
                 <button
                   className="icon-button"
                   aria-label="실행 상태 닫기"
@@ -817,7 +821,7 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
                 >
                   <X size={15} />
                 </button>
-              )}
+              }
             </div>
           )}
           <ChatComposer
@@ -897,15 +901,13 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
           </form>
         </Modal>
       )}
-      {current && needsConfirmation && !isTauri() && (
-        <div className="inline-tool-confirmation" role="group" aria-label="도구 실행 확인">
-          <p>
-            {current.request?.label || toolLabel(current.call!.tool, current.call!.arguments)}{' '}
-            작업을 실행할까요?
-          </p>
-          <button onClick={() => void execute(current, true)}>예</button>
-          <button onClick={() => void execute(current, false)}>아니오</button>
-        </div>
+      {current && needsConfirmation && (!current.voice || !isTauri()) && (
+        <ToolConfirmation
+          key={current.call?.id || current.voiceRequestId || 'main'}
+          prompt={confirmationPrompt(current.request || toolRequest(current.call!))}
+          busy={action?.status === 'pending'}
+          onChoose={(approved) => void execute(current, approved)}
+        />
       )}
       {notice && (
         <div className="toast" role="status">

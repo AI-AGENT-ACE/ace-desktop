@@ -48,6 +48,7 @@ export function ChatComposer({
   const fileInput = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const filesRef = useRef(files);
+  const submitting = useRef(false);
   filesRef.current = files;
   useEffect(
     () => () =>
@@ -65,18 +66,27 @@ export function ChatComposer({
       items.map((item, index) => (index === progress.index ? { ...item, ...progress } : item)),
     );
   const send = async () => {
-    if ((!text.trim() && !files.length) || busy) return;
+    if ((!text.trim() && !files.length) || busy || submitting.current) return;
+    submitting.current = true;
     setFileError('');
-    if (
-      await onSend(
-        text.trim(),
-        files.map((item) => item.file),
-        updateProgress,
-      )
-    ) {
-      files.forEach((item) => item.preview && URL.revokeObjectURL(item.preview));
-      setText('');
-      setFiles([]);
+    const submittedText = text.trim();
+    const submittedFiles = [...files];
+    setText('');
+    try {
+      if (
+        await onSend(
+          submittedText,
+          submittedFiles.map((item) => item.file),
+          updateProgress,
+        )
+      ) {
+        submittedFiles.forEach((item) => item.preview && URL.revokeObjectURL(item.preview));
+        setFiles([]);
+      } else if (!ref.current?.value) {
+        setText(submittedText);
+      }
+    } finally {
+      submitting.current = false;
     }
   };
   const addFiles = (selected: File[]) => {
@@ -179,7 +189,6 @@ export function ChatComposer({
             aria-label="메시지"
             placeholder="ACE에게 무엇이든 물어보세요"
             value={text}
-            disabled={busy}
             rows={1}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {

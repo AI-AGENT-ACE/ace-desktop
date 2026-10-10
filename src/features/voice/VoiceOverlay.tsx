@@ -121,7 +121,11 @@ export function VoiceOverlay({
           <div className="voice-orb-choices" aria-label="음성 명령 선택지">
             {choices.map((choice, index) => (
               <button key={choice.id} onClick={() => onChoice?.(choice.id)}>
-                {index + 1}. {choice.label}
+                {choice.id === 'yes'
+                  ? '네'
+                  : choice.id === 'no'
+                    ? '아니오'
+                    : `${index + 1}. ${choice.label}`}
               </button>
             ))}
             {!choices.some((choice) => choice.id === 'no') && (
