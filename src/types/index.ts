@@ -87,11 +87,18 @@ export interface SystemActionResult {
   message?: string;
   errorCode?: string;
 }
+export type VoiceLogErrorCode =
+  | 'BLOCKED'
+  | 'EXECUTION_FAILED'
+  | 'DESKTOP_REQUIRED'
+  | 'CANCELLED'
+  | 'CONFIRMATION_REQUIRED'
+  | 'INVALID_ARGUMENTS';
 export interface VoiceLogInput {
   commandType: string;
   status: 'SUCCESS' | 'FAILED' | 'CANCELLED';
   duration: number;
-  errorCode?: string;
+  errorCode?: VoiceLogErrorCode;
 }
 export interface NativeEntityReference {
   canonicalId?: string;

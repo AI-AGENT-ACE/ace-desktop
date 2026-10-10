@@ -52,6 +52,7 @@ import { settingsApi } from './api/settings.api';
 import { agentApi } from './api/agent.api';
 import { speakAssistant, stopSpeech } from './api/speech.api';
 import { recordVoiceLog } from './api/voice.api';
+import { normalizeVoiceLogErrorCode } from './api/voice-log-errors';
 import { apiErrorMessage, isCancelled } from './api/client';
 import { useConversations } from './hooks/useConversations';
 import { useMessages } from './hooks/useMessages';
@@ -436,11 +437,12 @@ function AceApp({ user, logout }: { user: User; logout: () => Promise<void> }) {
     errorCode?: string,
   ) => {
     try {
+      const normalizedErrorCode = normalizeVoiceLogErrorCode(errorCode);
       await recordVoiceLog({
         commandType: request.commandType,
         status,
         duration,
-        ...(errorCode ? { errorCode } : {}),
+        ...(normalizedErrorCode ? { errorCode: normalizedErrorCode } : {}),
       });
     } catch (cause) {
       if (mounted.current) setNotice(`음성 실행 로그 저장 실패: ${apiErrorMessage(cause)}`);
