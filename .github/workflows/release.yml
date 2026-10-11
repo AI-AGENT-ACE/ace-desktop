@@ -64,5 +64,7 @@ jobs:
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           generate_release_notes: true
+          draft: true
+          prerelease: true
           fail_on_unmatched_files: true
           files: src-tauri/target/release/bundle/nsis/*.exe
