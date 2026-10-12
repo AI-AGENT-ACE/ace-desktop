@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { normalizeAssistantMarkdown } from './markdown';
 import {
   ArrowDown,
   Check,
@@ -212,7 +213,7 @@ export function MessageList({
 
 function AssistantContent({
   id,
-  content,
+  content: rawContent,
   animate,
   onComplete,
 }: {
@@ -221,6 +222,8 @@ function AssistantContent({
   animate: boolean;
   onComplete?: (id: string) => void;
 }) {
+  // Convert line-break tags before typing starts without enabling raw HTML.
+  const content = normalizeAssistantMarkdown(rawContent);
   const [shouldAnimate] = useState(animate && !presentedReplies.has(id));
   const [length, setLength] = useState(shouldAnimate ? 0 : Array.from(content).length);
   const [copyState, setCopyState] = useState('응답 복사');
