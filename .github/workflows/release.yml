@@ -54,7 +54,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Build NSIS installer
-        run: npm run tauri build -- --bundles nsis
+        run: node scripts/tauri.mjs build --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
           name: ACE-Windows-${{ steps.release.outputs.tag }}
