@@ -3,19 +3,7 @@ use std::{ffi::c_void, path::Path};
 
 #[cfg(windows)]
 pub fn open_with_shell(target: &Path) -> Result<(), &'static str> {
-    use std::os::windows::process::CommandExt;
-    std::process::Command::new("explorer.exe")
-        .arg(target)
-        .creation_flags(0x08000000)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::PermissionDenied {
-                "PERMISSION_DENIED"
-            } else {
-                "EXECUTION_FAILED"
-            }
-        })
+    crate::shell_open::open(target)
 }
 
 #[cfg(windows)]

@@ -44,6 +44,7 @@ const nativeErrors: Record<string, string> = {
   DUPLICATE_REQUEST: '동일한 실행 요청이 이미 처리 중입니다.',
   ELEVATION_REQUIRED: '관리자 권한이 필요한 앱은 자동 실행할 수 없습니다.',
   EXECUTION_FAILED: '앱 실행 요청을 완료하지 못했습니다.',
+  NO_ASSOCIATION: '연결된 앱을 찾지 못했습니다. Windows 기본 앱 설정을 확인해 주세요.',
   APP_LAUNCH_FAILED: '앱을 실행하지 못했습니다.',
   WINDOW_NOT_FOUND: '실행 중인 앱 창을 찾지 못했습니다.',
   FILE_NOT_FOUND: '파일을 찾지 못했습니다.',

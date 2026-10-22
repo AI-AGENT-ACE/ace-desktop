@@ -5,6 +5,8 @@ mod local_stt;
 mod native_tools;
 mod native_windows;
 #[cfg(windows)]
+mod shell_open;
+#[cfg(windows)]
 mod taskbar;
 mod tray;
 mod voice_overlay;
