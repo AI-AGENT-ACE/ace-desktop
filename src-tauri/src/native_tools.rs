@@ -2339,6 +2339,12 @@ mod tests {
     }
     #[cfg(windows)]
     #[test]
+    fn drive_c_search_uses_c_drive_not_the_checkout_drive() {
+        assert_eq!(search_root("drive_c").unwrap(), PathBuf::from("C:\\"));
+    }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "Full-drive bounded search depends on host layout; run explicitly from a checkout on C:"]
     fn drive_c_search_finds_isolated_name_without_given_path() {
         let name = format!("ace-search-fixture-{}.txt", uuid::Uuid::new_v4());
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
