@@ -9,13 +9,13 @@ export const messagesApi = {
       })
     ).data;
   },
-  async create(id: string, content: string, attachmentIds: string[] = []) {
+  async create(id: string, content: string, attachmentIds: string[] = [], signal?: AbortSignal) {
     return (
       await apiClient.post<Message>(`/conversations/${id}/messages`, {
         content,
         role: 'USER',
         attachmentIds,
-      })
+      }, { signal })
     ).data;
   },
 };

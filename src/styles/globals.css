@@ -1035,7 +1035,46 @@ p {
   max-width: calc(100% - 40px);
 }
 .toast button {
+  background: #242424;
+  color: #ffffff;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.toast button:hover {
+  background: #eeeeee;
+  color: #171717;
+}
+.toast button:active {
+  background: #cccccc;
+  color: #111111;
+}
+.toast button:focus-visible {
+  background: #eeeeee;
+  color: #171717;
+  outline: 2px solid #ffffff;
+  outline-offset: 3px;
+}
+[data-theme='dark'] .toast button {
+  background: #eeeeee;
+  color: #171717;
+}
+[data-theme='dark'] .toast button:hover {
+  background: #333333;
+  color: #ffffff;
+}
+[data-theme='dark'] .toast button:active {
+  background: #111111;
+  color: #ffffff;
+}
+[data-theme='dark'] .toast button:focus-visible {
+  background: #333333;
+  color: #ffffff;
+  outline: 2px solid #171717;
+  outline-offset: 3px;
+}
+.toast button svg {
   color: inherit;
+  stroke: currentColor;
 }
 .skeletons > div {
   height: 29px;

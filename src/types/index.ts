@@ -75,6 +75,12 @@ export type VoiceState = 'idle' | 'listening' | 'processing' | 'error';
 export type SystemActionStatus = 'pending' | 'success' | 'error';
 export type IpcRiskLevel = 'SAFE' | 'CONFIRM' | 'BLOCKED';
 export interface SystemActionRequest {
+  executionTicket?: string;
+  previousAttemptId?: string;
+  executionId?: string;
+  attemptId?: string;
+  approvalId?: string;
+  requestId?: string;
   contractVersion?: '1.1';
   commandType: string;
   arguments: Record<string, unknown>;
@@ -82,6 +88,7 @@ export interface SystemActionRequest {
   label: string;
 }
 export interface SystemActionResult {
+  attemptId?: string;
   data?: Record<string, unknown>;
   success: boolean;
   message?: string;
@@ -110,6 +117,8 @@ export interface NativeSearchQueryReference {
   candidates: string[];
 }
 export interface ToolCall {
+  requestId?: string;
+  executionId?: string;
   version?: '1.1';
   type?: 'tool_call';
   id: string;

@@ -523,6 +523,21 @@ pub fn execute_local_command(
         target_name = Some(target.name.clone());
         if duplicate(&state, &command_type, &target) {
             failed("DUPLICATE_REQUEST")
+        } else if command_type == "app.close" {
+            match crate::app_windows::run(
+                &app_handle.state::<crate::app_windows::WindowTargets>(),
+                &target.process_name,
+                &target.name,
+                &command_type,
+                None,
+            ) {
+                Ok(crate::app_windows::Outcome::CloseRequested(_))
+                | Ok(crate::app_windows::Outcome::Done) => {
+                    success("선택한 창에 종료를 요청했습니다.".into())
+                }
+                Ok(crate::app_windows::Outcome::Select(_)) => failed("WINDOW_SELECTION_REQUIRED"),
+                Err(code) => failed(code),
+            }
         } else {
             execute_app(&command_type, &target)
         }
@@ -562,24 +577,10 @@ fn logged_result(
 
 #[cfg(windows)]
 pub(crate) fn execute_app(command: &str, target: &InstalledApp) -> ExecutionResult {
-    use std::os::windows::process::CommandExt;
-    let output = if command == "app.open" {
-        Command::new(&target.executable_path).spawn().map(|_| ())
-    } else if command == "app.close" {
-        Command::new("taskkill.exe")
-            .args(["/IM", &target.process_name, "/T"])
-            .creation_flags(0x08000000)
-            .output()
-            .and_then(|output| {
-                if output.status.success() {
-                    Ok(())
-                } else {
-                    Err(std::io::Error::other("process not running"))
-                }
-            })
-    } else {
-        return failed("BLOCKED");
-    };
+    if command != "app.open" {
+        return failed("WINDOW_SELECTION_REQUIRED");
+    }
+    let output = Command::new(&target.executable_path).spawn().map(|_| ());
     match output {
         Ok(()) => success(format!(
             "{} {} 요청 완료",

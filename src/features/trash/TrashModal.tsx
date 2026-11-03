@@ -5,8 +5,8 @@ import { conversationApi } from '../../api/conversations.api';
 import { apiErrorMessage } from '../../api/client';
 import { useTrashConversations } from '../../hooks/useConversations';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
-import type { TrashConversation } from '../../types';
-export function TrashModal({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+import type { Conversation, TrashConversation } from '../../types';
+export function TrashModal({ onClose, onRestored }: { onClose: () => void; onRestored: (conversation: Conversation) => void }) {
   const query = useTrashConversations();
   const [confirm, setConfirm] = useState<TrashConversation | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,12 +29,13 @@ export function TrashModal({ onClose, onChanged }: { onClose: () => void; onChan
     setBusy(true);
     setError('');
     try {
-      if (permanent) await conversationApi.permanentlyDelete(id);
-      else await conversationApi.restore(id);
+      const restored = permanent
+        ? (await conversationApi.permanentlyDelete(id), null)
+        : await conversationApi.restore(id);
       if (mounted.current) {
         query.remove(id);
         setConfirm(null);
-        onChanged();
+        if (restored) onRestored(restored);
       }
     } catch (cause) {
       if (mounted.current) setError(apiErrorMessage(cause));

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ACE",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "identifier": "com.ace.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,7 +29,8 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "icons/icon.ico": "ace-taskbar.ico"
+      "icons/icon.ico": "ace-taskbar.ico",
+      "resources/wake-word/": "wake-word/"
     },
     "icon": [
       "icons/32x32.png",

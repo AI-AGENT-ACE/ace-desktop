@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Orb 표시 검사</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React, { useState } from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { useMotionValue } from 'motion/react';
+      import { VoiceOverlay } from '../../src/features/voice/VoiceOverlay';
+      import '../../src/styles/globals.css';
+      import '../../src/styles/chat-experience.css';
+      import '../../src/styles/api.css';
+      const answer =
+        '### 서울 여행<br><br>**준비물**<br>- 교통카드<br>- 편한 신발<br><br>' +
+        Array.from(
+          { length: 30 },
+          (_, index) =>
+            `### ${index + 1}. 여행 안내\n\n문단을 끝까지 스크롤해서 읽을 수 있습니다.\n\n`,
+        ).join('');
+      function Preview() {
+        const [open, setOpen] = useState(true);
+        const [recording, setRecording] = useState(false);
+        const level = useMotionValue(0);
+        return React.createElement(
+          'div',
+          { className: 'voice-window' },
+          open &&
+            React.createElement(VoiceOverlay, {
+              visualState: recording ? 'LISTENING' : 'SUCCESS',
+              transcript: recording ? '듣고 있어요. 말씀해 주세요.' : answer,
+              audioLevel: level,
+              recording,
+              isAnswer: !recording,
+              canStartRecording: !recording,
+              onStartRecording: () => setRecording(true),
+              onStopRecording: () => setRecording(false),
+              onClose: () => setOpen(false),
+            }),
+        );
+      }
+      createRoot(document.getElementById('root')).render(React.createElement(Preview));
+    </script>
+  </body>
+</html>

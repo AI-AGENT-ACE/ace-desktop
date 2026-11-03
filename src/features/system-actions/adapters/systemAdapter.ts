@@ -1,4 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { agentApi } from '../../../api/agent.api';
+import { toolPresentation } from '../toolPresentation';
+import type { ApprovalView } from '../TargetDetails';
 import type {
   IpcRiskLevel,
   SystemActionRequest,
@@ -23,8 +26,8 @@ const policies: Record<string, IpcRiskLevel> = {
   'folder.create': 'CONFIRM',
   'web.open': 'SAFE',
   'web.search': 'SAFE',
-  'clipboard.write': 'SAFE',
-  'clipboard.read': 'CONFIRM',
+  'clipboard.write': 'CONFIRM',
+  'clipboard.read': 'SAFE',
   'voice.activate': 'SAFE',
   'screen.capture': 'SAFE',
   'system.volume.set': 'SAFE',
@@ -38,6 +41,8 @@ const policies: Record<string, IpcRiskLevel> = {
 };
 const blockedAppAliases = /^(cmd|명령 프롬프트|powershell|파워쉘|pwsh|wscript|cscript|mshta)$/i;
 const nativeErrors: Record<string, string> = {
+  WINDOW_SELECTION_REQUIRED: '작업할 창을 선택해 주세요.',
+  WINDOW_TARGET_STALE: '선택한 창이 닫혔거나 대상이 변경되었습니다. 다시 선택해 주세요.',
   APP_NOT_FOUND: '설치된 앱 목록에서 요청한 앱을 찾지 못했습니다.',
   AMBIGUOUS_APP: '같은 별칭을 사용하는 앱이 여러 개입니다.',
   STALE_APP_PATH: '앱 경로가 바뀌었습니다. ACE를 다시 시작해 주세요.',
@@ -51,6 +56,8 @@ const nativeErrors: Record<string, string> = {
   INVALID_ARGUMENT: '요청 인자가 올바르지 않습니다.',
   PATH_NOT_ALLOWED: '허용된 사용자 폴더 밖에는 접근할 수 없습니다.',
   DESTINATION_EXISTS: '대상 위치에 같은 이름이 이미 있습니다.',
+  WINDOW_FOCUS_FAILED:
+    '대상 창을 앞으로 가져오지 못해 종료 요청을 보내지 않았습니다.\n창을 직접 확인한 뒤 다시 시도해 주세요.',
   PERMISSION_DENIED: '운영체제 권한이 거부되었습니다.',
   CLIPBOARD_DENIED: '클립보드에 접근할 수 없습니다.',
   SCREEN_CAPTURE_FAILED: '화면을 캡처하지 못했습니다.',
@@ -71,18 +78,28 @@ interface NativeToolResult {
 export function localPolicy(commandType: string): IpcRiskLevel {
   return policies[commandType] || 'BLOCKED';
 }
+export function normalizeAppArguments(
+  tool: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!['app.open', 'app.close', 'app.focus', 'app.minimize', 'app.maximize'].includes(tool))
+    return args;
+  const allowed = ['appName', 'appId', 'canonicalId', 'original', 'candidates', 'targetWindowId'];
+  if (Object.keys(args).some((key) => !allowed.includes(key))) return args;
+  // Match the backend text adapter: the AI's canonical app ID takes precedence over its wording.
+  const appName = [args.appName, args.canonicalId, args.appId, args.original].find(
+    (value) => typeof value === 'string' && value.trim().length > 0,
+  );
+  return typeof appName === 'string'
+    ? {
+        appName: appName.trim(),
+        ...(args.targetWindowId ? { targetWindowId: args.targetWindowId } : {}),
+      }
+    : args;
+}
 export function toolLabel(tool: string, args: Record<string, unknown> = {}): string {
-  const names: Record<string, string> = {
-    'app.open': '앱 실행',
-    'app.close': '앱 종료',
-    'file.open': '파일 열기',
-    'file.delete': '파일 삭제',
-    'file.rename': '파일 이름 변경',
-    'file.search': '파일 찾기',
-    'folder.open': '폴더 열기',
-  };
   const target = args.original ?? args.appName ?? args.canonicalId ?? args.path;
-  return `${names[tool] || tool}${typeof target === 'string' ? ` · ${target.slice(0, 80)}` : ''}`;
+  return `${toolPresentation(tool).name}${typeof target === 'string' ? ` · ${target.slice(0, 80)}` : ''}`;
 }
 function objectParticle(value: string): string {
   const characters = Array.from(value.trim());
@@ -91,20 +108,66 @@ function objectParticle(value: string): string {
   return code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0 ? '을' : '를';
 }
 export function confirmationPrompt(request: SystemActionRequest): string {
+  if (request.commandType === 'clipboard.read') return '복사한 텍스트를 읽을까요?';
   const args = request.arguments;
   const rawTarget = args.appName ?? args.original ?? args.canonicalId ?? args.path;
   const target = typeof rawTarget === 'string' ? rawTarget.trim() : '';
-  if (target && request.commandType === 'app.open')
-    return `${target}${objectParticle(target)} 실행할까요?`;
-  if (target && request.commandType === 'app.close')
-    return `${target}${objectParticle(target)} 종료할까요?`;
-  if (target && request.commandType === 'file.delete')
-    return `${target}${objectParticle(target)} 삭제할까요?`;
-  if (request.commandType === 'system.lock') return '화면을 잠글까요?';
-  return `${request.label} 작업을 진행할까요?`;
+  if (target && target.length <= 24 && request.commandType === 'app.open')
+    return `${target}${objectParticle(target)} 열까요?`;
+  const questions: Record<string, string> = {
+    'app.open': '이 앱을 열까요?',
+    'app.close': '이 창을 닫을까요?',
+    'app.focus': '이 창을 앞으로 가져올까요?',
+    'app.minimize': '이 창을 최소화할까요?',
+    'app.maximize': '이 창을 최대화할까요?',
+    'file.open': '이 파일을 열까요?',
+    'file.delete': '이 파일을 휴지통으로 옮길까요?',
+    'file.copy': '이 파일을 복사할까요?',
+    'file.move': '이 파일을 이동할까요?',
+    'file.rename': '이 파일의 이름을 바꿀까요?',
+    'folder.open': '이 폴더를 열까요?',
+    'folder.create': '새 폴더를 만들까요?',
+    'screen.capture': '선택한 화면을 캡처할까요?',
+    'system.lock': '컴퓨터를 잠글까요?',
+    'web.open': '이 웹사이트를 열까요?',
+    'web.search': '인터넷에서 검색할까요?',
+  };
+  return questions[request.commandType] || '이 작업을 진행할까요?';
+}
+export function confirmationView(request: SystemActionRequest): ApprovalView {
+  const actions: Record<string, string> = {
+    'app.open': '열기',
+    'app.close': '닫기',
+    'app.focus': '앞으로 가져오기',
+    'app.minimize': '최소화',
+    'app.maximize': '최대화',
+    'file.open': '열기',
+    'file.copy': '복사',
+    'file.move': '이동',
+    'file.rename': '이름 바꾸기',
+    'file.delete': '휴지통으로 이동',
+    'folder.open': '열기',
+    'folder.create': '만들기',
+    'screen.capture': '캡처',
+    'system.lock': '잠금',
+    'web.open': '열기',
+    'web.search': '검색',
+    'clipboard.read': '읽기',
+    'clipboard.write': '복사',
+  };
+  const value = request.arguments.appName ?? request.arguments.original ?? request.arguments.url;
+  return {
+    question: confirmationPrompt(request),
+    action: actions[request.commandType] || '실행',
+    targets: typeof value === 'string' ? [{ label: '대상', name: value }] : [],
+    warning: request.commandType === 'file.delete' ? '휴지통에서 복원할 수 있습니다.' : undefined,
+  };
 }
 export function toolRequest(call: ToolCall): SystemActionRequest {
   return {
+    requestId: call.requestId || call.id,
+    executionId: call.executionId || call.id,
+    executionTicket: call.ticket,
     contractVersion: call.version || '1.1',
     commandType: call.tool,
     arguments: call.arguments,
@@ -158,7 +221,12 @@ export function classifyVoiceCommand(text: string): SystemActionRequest {
     riskLevel: 'BLOCKED',
   };
 }
+let activeCapture: string | null = null;
 export const systemAdapter = {
+  async cancelPendingCapture() {
+    if (activeCapture)
+      await invoke('cancel_screen_capture', { sessionId: activeCapture }).catch(() => undefined);
+  },
   async execute(request: SystemActionRequest, confirmed = false): Promise<SystemActionResult> {
     const risk = localPolicy(request.commandType);
     if (risk === 'BLOCKED') return { success: false, errorCode: 'BLOCKED' };
@@ -170,19 +238,116 @@ export const systemAdapter = {
         errorCode: 'DESKTOP_REQUIRED',
         message: '로컬 명령은 Tauri 데스크톱 앱에서 실행할 수 있습니다.',
       };
+    if (
+      ['file.open', 'file.copy', 'file.move', 'file.rename', 'file.delete'].includes(
+        request.commandType,
+      ) &&
+      request.arguments.query &&
+      !request.arguments.resourceId &&
+      !request.arguments.path &&
+      !request.arguments.sourcePath
+    ) {
+      return {
+        success: false,
+        errorCode: 'FILE_TARGET_SELECTION_REQUIRED',
+        data: request.arguments,
+        message: '실행할 파일과 대상 위치를 확인해 주세요.',
+      };
+    }
+    const arguments_ = normalizeAppArguments(request.commandType, request.arguments);
+    request.executionId ||= crypto.randomUUID();
+    request.attemptId ||= crypto.randomUUID();
+    if (risk === 'CONFIRM' && !request.approvalId) {
+      const prepared = await invoke<NativeToolResult>('prepare_native_tool', {
+        tool: request.commandType,
+        arguments: arguments_,
+        executionId: request.executionId,
+        attemptId: request.attemptId,
+      });
+      if (prepared.error?.code === 'NATIVE_APPROVAL_REQUIRED') {
+        if (request.commandType === 'app.close' && prepared.data?.preparedArguments)
+          request.arguments = prepared.data.preparedArguments as Record<string, unknown>;
+        await agentApi.executionEvent(request, 'WAITING_APPROVAL');
+      }
+      return {
+        success: false,
+        errorCode: prepared.error?.code || 'NATIVE_APPROVAL_REQUIRED',
+        data: prepared.data || undefined,
+        message: prepared.error?.message,
+      };
+    }
+    await agentApi.executionEvent(request, 'RUNNING');
     const native = await invoke<NativeToolResult>('execute_native_tool', {
       version: request.contractVersion || '1.1',
       tool: request.commandType,
-      arguments: request.arguments,
+      arguments: arguments_,
       confirmed,
+      approvalId: request.approvalId,
+      executionId: request.executionId,
+      attemptId: request.attemptId,
+      requestId: request.requestId,
     });
     if (!native.success) {
       const errorCode = native.error?.code || 'EXECUTION_FAILED';
       return {
         success: false,
         errorCode,
+        data: native.data ?? undefined,
         message: native.error?.message || nativeErrors[errorCode],
       };
+    }
+    if (typeof native.data?.closeTicket === 'string') {
+      const observed = await invoke<{ closed: boolean; message: string }>('observe_window_close', {
+        ticket: native.data.closeTicket,
+      });
+      return {
+        success: true,
+        data: { ...native.data, closed: observed.closed },
+        message: observed.message,
+      };
+    }
+    if (typeof native.data?.captureSessionId === 'string') {
+      activeCapture = native.data.captureSessionId;
+      try {
+        const data = await invoke<{ resourceId: string; displayName: string }>(
+          'await_screen_capture',
+          { sessionId: activeCapture },
+        );
+        return {
+          success: true,
+          data: { ...data, captured: true },
+          message: '화면 캡처를 완료했습니다.',
+        };
+      } catch (cause) {
+        return {
+          success: false,
+          errorCode: String(cause),
+          message:
+            String(cause) === 'CAPTURE_MONITOR_DISCONNECTED'
+              ? '선택한 모니터의 연결 또는 배치가 변경되었습니다.'
+              : String(cause) === 'CAPTURE_CANCELLED'
+                ? '화면 캡처를 취소했습니다.'
+                : '화면 캡처에 실패했습니다.',
+        };
+      } finally {
+        activeCapture = null;
+      }
+    }
+    if (native.data?.activationRequested) {
+      try {
+        const ready = await invoke<{ state: string }>('await_voice_activation');
+        return {
+          success: true,
+          data: { ...native.data, ...ready },
+          message: '음성 입력을 시작했습니다.',
+        };
+      } catch (cause) {
+        return {
+          success: false,
+          errorCode: String(cause),
+          message: '음성 입력을 시작하지 못했습니다. 마이크와 Orb 상태를 확인해 주세요.',
+        };
+      }
     }
     return {
       success: true,

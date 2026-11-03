@@ -67,6 +67,19 @@
   font-size: 12px;
   padding: 0;
 }
+.permission-group h4 {
+  margin: 18px 0 12px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+.permission-description {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .permission-choices {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -585,7 +598,7 @@ body:has(.voice-window),
 
 .voice-orb-close {
   position: absolute;
-  top: 9px;
+  bottom: 140px;
   right: 12px;
   z-index: 3;
   display: grid;
@@ -620,10 +633,13 @@ body:has(.voice-window),
 
 .voice-orb-bubble {
   position: absolute;
+  display: flex;
+  flex-direction: column;
   left: 18px;
   bottom: 165px;
-  width: 288px;
-  max-height: 235px;
+  width: calc(100% - 36px);
+  max-width: 460px;
+  max-height: min(430px, calc(100vh - 190px));
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
   border-radius: 18px 18px 5px 18px;
@@ -641,10 +657,45 @@ body:has(.voice-window),
   border-bottom: 0;
 }
 .voice-orb-bubble > p {
-  max-height: 64px;
+  min-height: 0;
+  max-height: 160px;
   overflow-y: auto;
 }
+.voice-orb-answer {
+  min-height: 0;
+  max-height: min(350px, calc(100vh - 265px));
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.65;
+  scrollbar-gutter: stable;
+}
+.voice-orb-answer p {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+}
+.voice-orb-answer h1 {
+  font-size: 20px;
+}
+.voice-orb-answer h2 {
+  font-size: 18px;
+}
+.voice-orb-answer h3 {
+  font-size: 16px;
+}
+.voice-orb-answer :is(h4, h5, h6) {
+  font-size: 14px;
+}
+.voice-orb-answer pre {
+  padding: 10px;
+}
+.voice-orb-hint {
+  display: block;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
 .voice-orb-choices {
+  flex-shrink: 0;
   display: grid;
   gap: 5px;
   max-height: 126px;
@@ -762,4 +813,145 @@ body:has(.voice-window),
 }
 .composer-file-error {
   color: var(--danger);
+}
+
+.voice-orb-choices {
+  max-height: 230px;
+  overflow-y: auto;
+}
+
+.capture-document,
+.capture-document body,
+.capture-document #root {
+  background: transparent !important;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.capture-selector {
+  position: fixed;
+  inset: 0;
+  cursor: crosshair;
+  background: rgba(0, 0, 0, 0.12);
+  touch-action: none;
+  user-select: none;
+}
+.capture-controls {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  padding: 16px;
+  border-radius: 12px;
+  background: #172334;
+  color: white;
+  cursor: default;
+  flex-wrap: wrap;
+  z-index: 2;
+}
+.capture-controls button {
+  padding: 8px 14px;
+  background: #ffffff;
+  color: #172334;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.capture-region {
+  position: absolute;
+  border: 2px solid #69b6ff;
+  box-shadow: 0 0 0 10000px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+.file-conflict {
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+}
+.file-target-resolver {
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+}
+.file-target-resolver label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+.file-target-resolver input,
+.file-target-resolver select {
+  padding: 8px;
+  background: var(--surface);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.file-target-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+.file-target-results button[aria-pressed='true'] {
+  background: var(--selected);
+  color: var(--accent);
+}
+.file-conflict dd {
+  margin: 6px 0 12px;
+  overflow-wrap: anywhere;
+}
+.file-conflict label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+.file-conflict input {
+  padding: 8px;
+}
+.capture-result {
+  position: fixed;
+  right: 24px;
+  bottom: 90px;
+  z-index: 50;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px #0002;
+}
+.profile-editor {
+  display: grid;
+  gap: 10px;
+  padding: 16px 0;
+}
+.profile-editor h3,
+.profile-editor p {
+  margin: 0;
+}
+.profile-editor label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.profile-editor input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #aaa);
+  color: inherit;
+  background: transparent;
+}
+.profile-editor button {
+  justify-self: end;
+  padding: 8px 14px;
+  border-radius: 8px;
 }

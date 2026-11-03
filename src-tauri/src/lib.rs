@@ -1,9 +1,19 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::Manager;
+mod activity;
+mod app_updates;
+mod app_windows;
+mod audio_input;
+mod capture_files;
+mod default_model;
+mod file_operations;
 mod local_commands;
 mod local_stt;
+mod native_approvals;
 mod native_tools;
 mod native_windows;
+mod recycle_bin;
+mod screen_capture;
 #[cfg(windows)]
 mod taskbar;
 mod tray;
@@ -39,13 +49,23 @@ fn greet(name: &str) -> String {
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(tray::TrayState::default())
+        .manage(app_updates::Updates::default())
+        .manage(audio_input::AudioInputState::default())
+        .manage(app_windows::WindowTargets::default())
+        .manage(file_operations::FileApprovals::default())
+        .manage(screen_capture::CaptureState::default())
+        .manage(capture_files::CaptureFiles::default())
         .manage(voice_overlay::VoiceRuntime::default())
         .manage(voice_recording::VoiceRecordingState::default())
         .manage(wake_word::WakeWordRuntime::default())
         .manage(wake_word_setup::WakeWordSetupRuntime::default())
         .manage(native_tools::NativeToolState::default())
+        .manage(native_approvals::Approvals::default())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(not(debug_assertions))]
+            app_updates::register(app.handle())?;
+            capture_files::start(app.handle());
             app.manage(local_commands::initialize(app.handle()));
             if let Err(error) = voice_recording::cleanup_expired(app.handle()) {
                 eprintln!("ACE voice temp startup cleanup failed: {error}");
@@ -70,6 +90,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == "capture-selector" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    screen_capture::cancel_active(window.app_handle());
+                }
+            }
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -89,10 +115,31 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            audio_input::get_audio_input_status,
+            audio_input::set_audio_input,
+            audio_input::start_audio_input,
+            audio_input::stop_audio_input,
             hide_ace,
             local_commands::execute_local_command,
             local_commands::list_installed_apps,
             native_tools::execute_native_tool,
+            native_tools::authorize_native_tool,
+            native_tools::prepare_native_tool,
+            native_tools::describe_native_target,
+            native_tools::await_voice_activation,
+            voice_overlay::report_voice_phase,
+            app_windows::observe_window_close,
+            file_operations::discard_file_approval,
+            file_operations::authorize_file_overwrite,
+            screen_capture::get_capture_context,
+            screen_capture::complete_screen_capture,
+            screen_capture::cancel_screen_capture,
+            screen_capture::await_screen_capture,
+            app_updates::update_status,
+            app_updates::check_app_update,
+            app_updates::install_app_update,
+            capture_files::release_capture_file,
+            capture_files::save_capture_file,
             voice_overlay::activate_voice_orb,
             voice_overlay::hide_voice_overlay,
             voice_overlay::submit_voice_command,
@@ -142,6 +189,8 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
             wake_word::stop(app);
+            screen_capture::cancel_active(app);
+            audio_input::stop(app);
             if let Err(error) = voice_recording::cancel_active(app) {
                 eprintln!("ACE recording exit cleanup failed: {error}");
             }

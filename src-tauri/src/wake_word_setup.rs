@@ -78,7 +78,22 @@ impl Default for VoiceActivationSettings {
 
 const DEFAULT_REFERENCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ace-default-wake.rpw"));
 
-fn default_reference_valid() -> bool {
+fn installed_default_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join("wake-word");
+    crate::default_model::validate(&root)
+}
+
+fn default_reference_valid(app: &AppHandle) -> bool {
+    if installed_default_path(app).is_ok() {
+        return true;
+    }
+    if !cfg!(debug_assertions) {
+        return false;
+    }
     #[cfg(windows)]
     {
         use rustpotter::WakewordLoad;
@@ -120,6 +135,8 @@ pub fn selected_reference_path(app: &AppHandle) -> Result<PathBuf, String> {
     match load_settings(app).model_source {
         Some(WakeModelSource::Personal) => active_reference_path(app),
         Some(WakeModelSource::Default) => {
+            if let Ok(path) = installed_default_path(app) {return Ok(path);}
+            if !cfg!(debug_assertions) {return Err("WAKE_DEFAULT_MODEL_INVALID".into());}
             let path = wake_dir(app)?.join("default-reference.rpw");
             fs::create_dir_all(wake_dir(app)?).map_err(|_| "WAKE_SETUP_STORAGE_FAILED")?;
             if fs::read(&path).ok().as_deref() != Some(DEFAULT_REFERENCE) {
@@ -245,7 +262,7 @@ pub fn load_settings(app: &AppHandle) -> VoiceActivationSettings {
     let reference_valid = active_reference_path(app)
         .ok()
         .is_some_and(|path| validate_reference_file(&path));
-    reconcile_models(settings, reference_valid, default_reference_valid())
+    reconcile_models(settings, reference_valid, default_reference_valid(app))
 }
 
 pub fn save_settings(app: &AppHandle, settings: &VoiceActivationSettings) -> Result<(), String> {
@@ -380,7 +397,8 @@ fn begin_native_recording(app: &AppHandle, path: PathBuf, test: bool) -> Result<
         } else {
             None
         };
-        let (next, rate, identity) = crate::wake_setup_capture::Capture::start(reference)?;
+        let (next, rate, identity) =
+            crate::wake_setup_capture::Capture::start(Some(app.clone()), reference)?;
         let mut expected = runtime
             .device_identity
             .lock()
@@ -780,6 +798,10 @@ pub fn postpone_wake_word_setup(
     save_settings(&app, &settings)?;
     let _ = fs::remove_dir_all(staging_dir(&app)?);
     Ok(settings)
+}
+
+pub(crate) fn cancel_input_for_device_change(app: &AppHandle) -> Result<(), String> {
+    cancel_setup_files(app)
 }
 
 fn cancel_setup_files(app: &AppHandle) -> Result<(), String> {

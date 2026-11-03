@@ -8,7 +8,12 @@ import type { AgentSettings, Permission, PermissionPolicy } from '../../types';
 import { PermissionSettings } from './PermissionSettings';
 import { WakeSensitivitySettings } from '../voice/WakeSensitivitySettings';
 import { WakeChimeSettings } from '../voice/WakeChimeSettings';
+import { MicrophoneSettings } from '../voice/MicrophoneSettings';
+import { ProfileSettings } from './ProfileSettings';
+import { UpdateSettings } from './UpdateSettings';
+import { speakAssistant, stopSpeech } from '../../api/speech.api';
 export function SettingsModal({
+  permissionTarget,
   theme,
   wake,
   wakeState,
@@ -25,6 +30,7 @@ export function SettingsModal({
   onLogout,
 }: {
   theme: string;
+  permissionTarget?: string;
   wake: boolean;
   wakeState: 'disabled' | 'starting' | 'listening' | 'triggered' | 'paused' | 'error';
   onTheme: (value: string) => void;
@@ -82,6 +88,7 @@ export function SettingsModal({
   const save = (next: AgentSettings) =>
     void update(async () => {
       const saved = await settingsApi.update(next);
+      if (!saved.ttsEnabled) stopSpeech();
       if (mounted.current) setSettings(saved);
     });
   const savePermission = (permission: Permission, policy: PermissionPolicy) =>
@@ -115,7 +122,10 @@ export function SettingsModal({
     });
   return (
     <Modal title="설정" onClose={onClose}>
+      <ProfileSettings />
+      <UpdateSettings />
       <p className="modal-description">ACE를 나에게 맞게 설정하세요.</p>
+      <MicrophoneSettings />
       {error && (
         <p className="danger-text" role="alert">
           {error}
@@ -206,13 +216,15 @@ export function SettingsModal({
           </div>
           <div className="setting-row">
             <div>
-              <strong>음성 응답 선호</strong>
-              <p>채팅 답변을 음성으로 읽어줍니다.</p>
+              <strong>TTS 사용하기</strong>
+              <p>
+                채팅과 Orb 답변을 음성으로 읽어줍니다. 컴퓨터의 출력 음량과 음소거 설정을 따릅니다.
+              </p>
             </div>
             <button
               className={`toggle ${settings.ttsEnabled ? 'on' : ''}`}
               role="switch"
-              aria-label="음성 응답 선호"
+              aria-label="TTS 사용하기"
               aria-checked={settings.ttsEnabled}
               disabled={busy}
               onClick={() => save({ ...settings, ttsEnabled: !settings.ttsEnabled })}
@@ -220,9 +232,31 @@ export function SettingsModal({
               <span />
             </button>
           </div>
+          <div className="setting-row">
+            <div>
+              <strong>음성 미리 듣기</strong>
+              <p>현재 출력 장치에서 ACE 목소리를 확인합니다.</p>
+            </div>
+            <button
+              disabled={busy || !settings.ttsEnabled}
+              onClick={() =>
+                void speakAssistant('안녕하세요. ACE의 음성 응답입니다.').catch(() =>
+                  setError('음성을 재생하지 못했습니다. 서버 연결과 출력 장치를 확인해 주세요.'),
+                )
+              }
+            >
+              미리 듣기
+            </button>
+            <button onClick={stopSpeech}>재생 중지</button>
+          </div>
         </>
       )}
-      <PermissionSettings permissions={permissions} busy={busy} onChange={savePermission} />
+      <PermissionSettings
+        targetTool={permissionTarget}
+        permissions={permissions}
+        busy={busy}
+        onChange={savePermission}
+      />
       <div className="setting-row">
         <div>
           <strong>삭제된 대화</strong>

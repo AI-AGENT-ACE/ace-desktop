@@ -1,6 +1,24 @@
 import { apiClient } from './client';
-import type { AgentTurn, ToolCall } from '../types';
+import type { AgentTurn, ToolCall, SystemActionRequest } from '../types';
 export const agentApi = {
+  async registerExecution(request: SystemActionRequest) {
+    return (
+      await apiClient.post<ToolCall>('/agent/executions', {
+        requestId: request.requestId || crypto.randomUUID(),
+        tool: request.commandType,
+        arguments: request.arguments,
+      })
+    ).data;
+  },
+  async executionEvent(request: SystemActionRequest, state: string) {
+    if (!request.executionTicket || !request.attemptId) return;
+    await apiClient.post('/agent/executions/events', {
+      ticket: request.executionTicket,
+      attemptId: request.attemptId,
+      previousAttemptId: request.previousAttemptId,
+      state,
+    });
+  },
   async turn(
     conversationId: string,
     content: string,
@@ -30,12 +48,27 @@ export const agentApi = {
     status: 'SUCCEEDED' | 'FAILED' | 'DENIED',
     confirmed: boolean,
     duration: number,
-    result?: { summary: string },
+    result?: {
+      summary: string;
+      failureReason?: string;
+      text?: string;
+      mute?: boolean;
+      search?: { count: number; partial: boolean; displayedLocally: true };
+    },
+    attemptId?: string,
   ) {
     return (
       await apiClient.post<AgentTurn>(
         '/agent/tool-results',
-        { ticket: call.ticket, status, confirmed, duration, ...(result ? { result } : {}) },
+        {
+          ticket: call.ticket,
+          executionId: call.id,
+          attemptId,
+          status,
+          confirmed,
+          duration,
+          ...(result ? { result } : {}),
+        },
         { timeout: 150000 },
       )
     ).data;
