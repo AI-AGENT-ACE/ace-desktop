@@ -16,23 +16,29 @@ pub struct Captured {
 }
 
 pub struct Capture {
+    _activity: crate::activity::Activity,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<Result<Captured, String>>>,
 }
 
 impl Capture {
-    pub fn start(reference: Option<PathBuf>) -> Result<(Self, u32, String), String> {
+    pub fn start(
+        app: Option<tauri::AppHandle>,
+        reference: Option<PathBuf>,
+    ) -> Result<(Self, u32, String), String> {
+        let activity = crate::activity::begin().map_err(str::to_owned)?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
-            let result = run(stopping, reference, &ready_tx);
+            let result = run(app, stopping, reference, &ready_tx);
             if let Err(error) = &result {
                 let _ = ready_tx.try_send(Err(error.clone()));
             }
             result
         });
         let capture = Self {
+            _activity: activity,
             stop,
             worker: Some(worker),
         };
@@ -65,12 +71,16 @@ impl Drop for Capture {
 type Ready = mpsc::SyncSender<Result<(u32, String), String>>;
 
 fn run(
+    app: Option<tauri::AppHandle>,
     stop: Arc<AtomicBool>,
     reference: Option<PathBuf>,
     ready: &Ready,
 ) -> Result<Captured, String> {
     let host = cpal::default_host();
-    let device = select_device(&host)?;
+    let device = match app {
+        Some(app) => crate::audio_input::select_device(&app, &host)?,
+        None => select_device(&host)?,
+    };
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let rate = supported.sample_rate();
     let channels = supported.channels();
@@ -227,7 +237,7 @@ mod tests {
     #[ignore = "Requires a physical microphone; run explicitly on the target Windows machine"]
     fn native_capture_starts_stops_and_releases_device() {
         for _ in 0..2 {
-            let (capture, rate, _) = Capture::start(None).expect("native microphone starts");
+            let (capture, rate, _) = Capture::start(None, None).expect("native microphone starts");
             std::thread::sleep(Duration::from_millis(350));
             let result = capture.finish().expect("native microphone stops");
             assert!(!result.samples.is_empty());

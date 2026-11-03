@@ -6,7 +6,7 @@ import ts from 'typescript';
 import axios from 'axios';
 
 const bus = new Map();
-async function runtime(label) {
+async function runtime(label, nativeCalls) {
   const storage = () => {
     const data = new Map();
     return {
@@ -16,6 +16,7 @@ async function runtime(label) {
     };
   };
   const context = vm.createContext({
+    crypto: globalThis.crypto,
     console,
     setTimeout,
     clearTimeout,
@@ -38,8 +39,24 @@ async function runtime(label) {
   cache.set(
     '@tauri-apps/api/core',
     synthetic('core', {
-      isTauri: () => false,
-      invoke: async () => {
+      isTauri: () => Boolean(nativeCalls),
+      invoke: async (name, args) => {
+        if (name === 'prepare_native_tool') {
+          nativeCalls?.push({ name, args });
+          return {
+            success: false,
+            error: { code: 'NATIVE_APPROVAL_REQUIRED' },
+            data: { pendingId: 'pending-test' },
+          };
+        }
+        if (name === 'authorize_native_tool') {
+          nativeCalls?.push({ name, args });
+          return 'native-approval-test';
+        }
+        if (nativeCalls) {
+          nativeCalls.push({ name, args });
+          return { success: true, data: { displayName: 'Notepad' }, error: null };
+        }
         throw new Error('Unexpected native execution in test');
       },
     }),
@@ -107,6 +124,72 @@ test('portfolio phrase maps to the exact file without accepting unrelated comman
   for (const phrase of ['포트폴리오 열지마', '다른 파일 열어줘', '포트폴리오 삭제해줘']) {
     assert.notEqual(classifyVoiceCommand(phrase).commandType, 'file.open');
   }
+});
+
+test('voice app arguments use the same appName contract as main chat without fuzzy correction', async () => {
+  const { normalizeAppArguments } = await (
+    await runtime('app-arguments')
+  ).imported('/src/features/system-actions/adapters/systemAdapter.ts');
+  const normalized = normalizeAppArguments('app.close', {
+    original: '메모장 닫아줘',
+    canonicalId: 'notepad',
+    candidates: ['Notepad'],
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(normalized)), { appName: 'notepad' });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(normalizeAppArguments('app.open', { appName: '메모장' }))),
+    { appName: '메모장' },
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(normalizeAppArguments('app.close', { original: '외모장' }))),
+    { appName: '외모장' },
+  );
+  const invalid = { canonicalId: 'notepad', executablePath: 'C:/custom.exe' };
+  assert.equal(normalizeAppArguments('app.close', invalid), invalid);
+  const file = { resourceId: 'resource' };
+  assert.equal(normalizeAppArguments('file.open', file), file);
+});
+
+test('approved voice close passes the canonical app name to the existing native validator', async () => {
+  const calls = [];
+  const { systemAdapter } = await (
+    await runtime('voice-close', calls)
+  ).imported('/src/features/system-actions/adapters/systemAdapter.ts');
+  const request = {
+    commandType: 'app.close',
+    contractVersion: '1.1',
+    arguments: {
+      original: '메모장',
+      candidates: ['메모장', 'Windows Notepad', 'notepad'],
+      canonicalId: 'notepad',
+    },
+    riskLevel: 'CONFIRM',
+    label: '메모장 종료',
+  };
+  assert.equal((await systemAdapter.execute(request, false)).errorCode, 'CONFIRMATION_REQUIRED');
+  assert.equal(calls.length, 0);
+  assert.equal((await systemAdapter.execute(request, true)).errorCode, 'NATIVE_APPROVAL_REQUIRED');
+  assert.equal(calls[0].name, 'prepare_native_tool');
+  assert.equal(
+    calls.some((value) => value.name === 'execute_native_tool'),
+    false,
+  );
+  request.approvalId = 'native-approval-test';
+  assert.equal((await systemAdapter.execute(request, true)).success, true);
+  const call = JSON.parse(
+    JSON.stringify(calls.find((value) => value.name === 'execute_native_tool')),
+  );
+  assert.equal(call.name, 'execute_native_tool');
+  assert.deepEqual(call.args, {
+    version: '1.1',
+    tool: 'app.close',
+    arguments: { appName: 'notepad' },
+    confirmed: true,
+    approvalId: 'native-approval-test',
+    executionId: call.args.executionId,
+    attemptId: call.args.attemptId,
+  });
+  assert.match(call.args.executionId, /^[0-9a-f-]{36}$/);
 });
 
 test('endpoint preserves initial silence and sentence pauses; ends after speech + 1.5s silence', async () => {

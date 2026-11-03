@@ -38,6 +38,15 @@ export function useAuth() {
       }
     };
     window.addEventListener('ace-session-change', changed);
+    const profileUpdated = (event: Event) => {
+      const user = (event as CustomEvent<User>).detail;
+      setState((current) =>
+        current.status === 'authenticated' && current.user.id === user.id
+          ? { status: 'authenticated', user }
+          : current,
+      );
+    };
+    window.addEventListener('ace-profile-updated', profileUpdated);
     if (!getSession()) setState({ status: 'unauthenticated', user: null });
     else
       void authApi
@@ -55,6 +64,7 @@ export function useAuth() {
     return () => {
       controller.abort();
       window.removeEventListener('ace-session-change', changed);
+      window.removeEventListener('ace-profile-updated', profileUpdated);
     };
   }, []);
   const authenticate = async (mode: 'login' | 'signup', input: AuthInput) => {

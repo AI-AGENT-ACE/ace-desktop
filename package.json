@@ -1,11 +1,11 @@
 {
   "name": "ace-desktop",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/check-production-native-panel.mjs",
     "preview": "vite preview",
     "format": "prettier --write src/api src/hooks src/types src/App.tsx src/main.tsx src/layouts/Sidebar.tsx src/features/chat src/features/trash src/features/settings src/features/auth src/features/voice src/features/system-actions scripts tests playwright.config.ts README.md docs/API_CONNECTION.md src/styles/api.css",
     "format:check": "prettier --check src/api src/hooks src/types src/App.tsx src/main.tsx src/layouts/Sidebar.tsx src/features/chat src/features/trash src/features/settings src/features/auth src/features/voice src/features/system-actions scripts tests playwright.config.ts README.md docs/API_CONNECTION.md src/styles/api.css",

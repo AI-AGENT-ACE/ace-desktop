@@ -60,12 +60,14 @@ fn wake_error_code(error: &str) -> &str {
 fn wake_user_message(code: &str) -> String {
     match code {
         WAKE_MIC_PERMISSION_DENIED => "Windows 설정에서 데스크톱 앱의 마이크 접근을 허용해 주세요.",
-        WAKE_MIC_DEVICE_NOT_FOUND => "Wake Word에 사용할 음성 입력 장치를 찾지 못했습니다.",
+        WAKE_MIC_DEVICE_NOT_FOUND => {
+            "마이크 연결을 확인하고 설정에서 입력 마이크를 다시 선택해 주세요."
+        }
         WAKE_MIC_ENUMERATION_FAILED
         | WAKE_MIC_CONFIG_FAILED
         | WAKE_MIC_UNSUPPORTED_FORMAT
         | WAKE_MIC_STREAM_BUILD_FAILED
-        | WAKE_MIC_STREAM_START_FAILED => "Wake Word 마이크 초기화에 실패했습니다.",
+        | WAKE_MIC_STREAM_START_FAILED => "설정에서 입력 마이크를 다시 선택해 주세요.",
         WAKE_ENGINE_INIT_FAILED | WAKE_ENGINE_MODEL_LOAD_FAILED | WAKE_ENGINE_RUNTIME_FAILED => {
             "Wake Word 엔진을 시작하지 못했습니다."
         }
@@ -770,13 +772,14 @@ fn run_listener(
                 "none"
             }
         ));
-        let device = crate::wake_setup_capture::select_device(&host).map_err(|error| {
+        let device = crate::audio_input::select_device(&app, &host).map_err(|error| {
             wake_error(
                 WAKE_MIC_CONFIG_FAILED,
                 "기본 마이크를 선택하지 못했습니다.",
                 error,
             )
         })?;
+        let selected_device_id = device.id().map_err(|error| error.to_string())?.to_string();
         let device_name = device
             .description()
             .map(|description| description.name().to_owned())
@@ -974,22 +977,31 @@ fn run_listener(
         wake_log("stream.play: success; local KWS listening");
         #[cfg(debug_assertions)]
         crate::wake_diagnostics::initialize(&kws_config, &reference_bytes);
-        Ok((stream, spotter, audio_rx, event_rx, metrics, input_channels))
+        Ok((
+            stream,
+            spotter,
+            audio_rx,
+            event_rx,
+            metrics,
+            input_channels,
+            selected_device_id,
+        ))
     })();
 
-    let (stream, mut spotter, audio, events, metrics, input_channels) = match setup {
-        Ok(value) => value,
-        Err(error) => {
-            wake_log(format!(
+    let (stream, mut spotter, audio, events, metrics, input_channels, selected_device_id) =
+        match setup {
+            Ok(value) => value,
+            Err(error) => {
+                wake_log(format!(
                 "listener exited: instance_id={listener_id}, reason=initialization_failed, error_code={}",
                 wake_error_code(&error)
             ));
-            #[cfg(debug_assertions)]
-            crate::wake_diagnostics::finish("initialization_failed");
-            let _ = ready.send(Err(error));
-            return;
-        }
-    };
+                #[cfg(debug_assertions)]
+                crate::wake_diagnostics::finish("initialization_failed");
+                let _ = ready.send(Err(error));
+                return;
+            }
+        };
     let stream = stream;
     let _ = ready.send(Ok(()));
     let mut pending_i16 = Vec::new();
@@ -1004,12 +1016,32 @@ fn run_listener(
     let mut engine_levels = SignalLevels::default();
     let mut processed_frames = 0_u64;
     let mut final_detections = 0_u64;
+    let mut device_check = Instant::now();
     let mut exit_reason = "stop requested";
     loop {
         #[cfg(debug_assertions)]
         crate::wake_diagnostics::tick();
         if stop_rx.try_recv().is_ok() {
             break;
+        }
+        if device_check.elapsed() > Duration::from_secs(1) {
+            let present = cpal::default_host()
+                .input_devices()
+                .is_ok_and(|mut devices| {
+                    devices.any(|d| d.id().is_ok_and(|id| id.to_string() == selected_device_id))
+                });
+            if !present {
+                app.state::<WakeWordRuntime>().update(
+                    &app,
+                    WakeWordState::Error,
+                    true,
+                    Some(wake_user_message(WAKE_MIC_DEVICE_NOT_FOUND)),
+                    Some(WAKE_MIC_DEVICE_NOT_FOUND.into()),
+                );
+                exit_reason = "selected microphone disconnected";
+                break;
+            }
+            device_check = Instant::now();
         }
         if paused_for_voice && !voice_overlay::is_active(&app) {
             match stream.play() {

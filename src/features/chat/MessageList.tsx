@@ -20,12 +20,14 @@ const presentedReplies = new Set<string>();
 export function MessageList({
   query,
   sending,
+  progressLabel,
   optimistic,
   animateIds,
   onReplyComplete,
 }: {
   query: ReturnType<typeof useMessages>;
   sending: boolean;
+  progressLabel?: string;
   optimistic?: Message | null;
   animateIds?: Set<string>;
   onReplyComplete?: (id: string) => void;
@@ -35,6 +37,15 @@ export function MessageList({
   const [showJump, setShowJump] = useState(false);
   const previous = useRef<{ height: number; top: number } | null>(null);
   const initialized = useRef(false);
+  const lastSubmitted = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!optimistic || optimistic.id === lastSubmitted.current) return;
+    lastSubmitted.current = optimistic.id;
+    nearBottom.current = true;
+    previous.current = null;
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+    setShowJump(false);
+  }, [optimistic?.id]);
   const allMessages =
     optimistic && !query.items.some((item) => item.id === optimistic.id)
       ? [...query.items, optimistic]
@@ -67,7 +78,7 @@ export function MessageList({
       if (!query.isLoading) initialized.current = true;
     }
     updateJump();
-  }, [messages, sending, query.isLoading, query.isLoadingMore]);
+  }, [messages, sending, progressLabel, query.isLoading, query.isLoadingMore]);
   const older = () => {
     if (
       query.hasMore &&
@@ -171,11 +182,11 @@ export function MessageList({
                   )}
                 </article>
               ))}
-              {sending && (
+              {(sending || progressLabel) && (
                 <article
                   className="message assistant thinking-message"
                   role="status"
-                  aria-label="ACE가 답변을 생각하는 중"
+                  aria-label={progressLabel || 'ACE가 답변을 생각하는 중'}
                 >
                   <div className="message-author">
                     <img src="/ace-logo.png" alt="" />
@@ -187,7 +198,7 @@ export function MessageList({
                       <i />
                       <i />
                     </span>
-                    생각 중…
+                    {progressLabel || '생각 중…'}
                   </div>
                 </article>
               )}

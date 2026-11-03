@@ -24,9 +24,13 @@ async function settings(overrides = {}) {
     '../../api/client': { apiErrorMessage: String, isCancelled: () => false },
     '../../components/Modal': { Modal: 'modal' },
     './PermissionSettings': { PermissionSettings: 'permissions' },
+    './ProfileSettings': { ProfileSettings: 'profile' },
+    './UpdateSettings': { UpdateSettings: 'updates' },
+    '../../api/speech.api': { speakAssistant: async () => {}, stopSpeech() {} },
     '../voice/WakeDiagnosticPanel': { WakeDiagnosticPanel: 'diagnostics' },
     '../voice/WakeSensitivitySettings': { WakeSensitivitySettings: 'sensitivity' },
     '../voice/WakeChimeSettings': { WakeChimeSettings: 'chime' },
+    '../voice/MicrophoneSettings': { MicrophoneSettings: 'microphone' },
   };
   const source = await readFile(
     new URL('../src/features/settings/SettingsModal.tsx', import.meta.url),

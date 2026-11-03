@@ -72,6 +72,18 @@ export function useCursorList<T extends { id: string }>(
     };
   }, [enabled, request]);
   const refresh = useCallback(() => request(false), [request]);
+  const clear = useCallback(() => {
+    ++epoch.current;
+    flight.current?.abort();
+    flight.current = null;
+    current.current = { cursor: null, hasMore: false };
+    setItems([]);
+    setNextCursor(null);
+    setHasMore(false);
+    setLoading(false);
+    setLoadingMore(false);
+    setError(null);
+  }, []);
   const loadMore = useCallback(() => request(true), [request]);
   const remove = useCallback(
     (id: string) => {
@@ -93,6 +105,7 @@ export function useCursorList<T extends { id: string }>(
     isLoadingMore,
     error,
     refresh,
+    clear,
     loadMore,
     remove,
     upsert,

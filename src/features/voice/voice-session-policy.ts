@@ -3,8 +3,15 @@ export const SUCCESS_CLOSE_MS = 3000;
 export const RETRY_LISTEN_MS = 5000;
 
 export function resolveVoiceChoice(transcript: string, choices: VoiceChoice[]): string | null {
-  const text = transcript.replace(/[\s.,!?。]/g, '').toLowerCase();
-  if (['아니오', '아니요', '아니', '취소', '취소해줘', 'no'].includes(text))
+  const text = transcript
+    .normalize('NFKC')
+    .replace(/[\s\p{P}]/gu, '')
+    .toLowerCase();
+  if (text.includes('취소하지') || text.includes('아니지')) return null;
+  // Repeated negative responses are still refusals. Never guess an approval.
+  if (
+    /^(?:아니오|아니요|아뇨|아니|취소(?:요|해줘|해주세요|할게요)?|하지마(?:세요)?|no)+$/u.test(text)
+  )
     return choices.find((choice) => choice.id === 'no')?.id ?? (choices.length ? 'cancel' : null);
   if (['네', '예', '응', '좋아요', '실행', '실행해줘', 'yes'].includes(text))
     return choices.find((choice) => choice.id === 'yes')?.id ?? null;
@@ -13,7 +20,9 @@ export function resolveVoiceChoice(transcript: string, choices: VoiceChoice[]): 
     ['2', '2번', '이', '이번', '두번째'],
     ['3', '3번', '삼', '삼번', '세번째'],
   ];
-  const index = aliases.findIndex((values) => values.includes(text));
+  const number = /^(\d{1,3})(?:번|번째)?(?:이요|요)?$/.exec(text);
+  if (number) return choices[Number(number[1]) - 1]?.id ?? null;
+  const index = aliases.findIndex((values) => values.includes(text.replace(/(?:이요|요)$/u, '')));
   return index >= 0 ? (choices[index]?.id ?? null) : null;
 }
 

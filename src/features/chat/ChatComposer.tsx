@@ -13,6 +13,10 @@ export function ChatComposer({
   busy,
   sending,
   onStop,
+  history = [],
+  hasOlderHistory = false,
+  historyLoading = false,
+  onLoadOlderHistory,
 }: {
   onSend: (
     text: string,
@@ -23,10 +27,27 @@ export function ChatComposer({
   busy: boolean;
   sending?: boolean;
   onStop?: () => void;
+  history?: string[];
+  hasOlderHistory?: boolean;
+  historyLoading?: boolean;
+  onLoadOlderHistory?: () => Promise<void>;
 }) {
   const [text, setText] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
   const submitting = useRef(false);
+  const historyIndex = useRef<number | null>(null);
+  const historySnapshot = useRef<string[]>([]);
+  const waitingForHistory = useRef(false);
+  useLayoutEffect(() => {
+    if (!waitingForHistory.current || historyLoading) return;
+    const added = history.length - historySnapshot.current.length;
+    if (added > 0) {
+      historySnapshot.current = [...history];
+      historyIndex.current = added - 1;
+      setText(history[added - 1]);
+      waitingForHistory.current = false;
+    } else waitingForHistory.current = false;
+  }, [history, historyLoading, hasOlderHistory]);
   useLayoutEffect(() => {
     if (ref.current) {
       ref.current.style.height = 'auto';
@@ -38,6 +59,8 @@ export function ChatComposer({
     submitting.current = true;
     const submittedText = text.trim();
     setText('');
+    historyIndex.current = null;
+    waitingForHistory.current = false;
     try {
       if (!(await onSend(submittedText, [], () => {})) && !ref.current?.value) {
         setText(submittedText);
@@ -56,8 +79,43 @@ export function ChatComposer({
             placeholder="ACE에게 무엇이든 물어보세요"
             value={text}
             rows={1}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              historyIndex.current = null;
+              waitingForHistory.current = false;
+              setText(e.target.value);
+            }}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
+                return;
+              if (e.key === 'ArrowUp' && (text === '' || historyIndex.current !== null)) {
+                if (historyIndex.current === 0 && hasOlderHistory && onLoadOlderHistory) {
+                  e.preventDefault();
+                  if (!historyLoading && !waitingForHistory.current) {
+                    waitingForHistory.current = true;
+                    void onLoadOlderHistory().catch(() => {
+                      waitingForHistory.current = false;
+                    });
+                  }
+                  return;
+                }
+                if (historyIndex.current === null) historySnapshot.current = [...history];
+                if (!historySnapshot.current.length) return;
+                e.preventDefault();
+                const next =
+                  historyIndex.current === null
+                    ? historySnapshot.current.length - 1
+                    : Math.max(0, historyIndex.current - 1);
+                historyIndex.current = next;
+                setText(historySnapshot.current[next]);
+                return;
+              }
+              if (e.key === 'ArrowDown' && historyIndex.current !== null) {
+                e.preventDefault();
+                const next = historyIndex.current + 1;
+                historyIndex.current = next < historySnapshot.current.length ? next : null;
+                setText(historySnapshot.current[next] ?? '');
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void send();

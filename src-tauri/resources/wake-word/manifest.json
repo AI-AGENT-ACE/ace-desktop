@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "modelVersion": "0.1.0",
+  "engine": "rustpotter-3.0.2-ref",
+  "file": "ace.rpw",
+  "sizeBytes": 32053,
+  "sha256": "e2fff827fac02b8bbbfa8b9ee7e6b34f688d47747d142fe8ce9ed9a670e60f20",
+  "redistributionApproved": true,
+  "consentRecord": "consent.json",
+  "evaluationRecord": "evaluation.json",
+  "releasePolicy": "personal-preview"
+}

@@ -41,3 +41,9 @@ coverage/
 # Local voice fixtures and personal diagnostic captures
 src-tauri/resources/wake-word/samples/*.wav
 *.rpw
+!src-tauri/resources/wake-word/ace.rpw
+src-tauri/resources/wake-word/**/*.wav
+src-tauri/tauri.update.generated.json
+*.key
+*.pfx
+*.p12

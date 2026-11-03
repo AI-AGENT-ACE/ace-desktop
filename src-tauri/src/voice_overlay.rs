@@ -7,8 +7,26 @@ use tauri::{Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder
 
 #[derive(Default)]
 pub struct VoiceRuntime {
+    phase: Mutex<String>,
     active: AtomicBool,
     pending: Mutex<Option<PendingVoiceRequest>>,
+}
+pub fn is_busy(app: &tauri::AppHandle) -> bool {
+    app.state::<VoiceRuntime>()
+        .phase
+        .lock()
+        .map(|phase| {
+            matches!(
+                phase.as_str(),
+                "LISTENING"
+                    | "TRANSCRIBING"
+                    | "THINKING"
+                    | "EXECUTING"
+                    | "SPEAKING"
+                    | "WAITING_CONFIRMATION"
+            )
+        })
+        .unwrap_or(true)
 }
 
 struct PendingVoiceRequest {
@@ -24,8 +42,8 @@ impl PendingVoiceRequest {
     }
 }
 
-const VOICE_WIDTH: f64 = 380.0;
-const VOICE_HEIGHT: f64 = 420.0;
+const VOICE_WIDTH: f64 = 520.0;
+const VOICE_HEIGHT: f64 = 640.0;
 const EDGE_MARGIN: i32 = 28;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -44,6 +62,60 @@ struct Bounds {
 
 pub fn is_active(app: &tauri::AppHandle) -> bool {
     app.state::<VoiceRuntime>().active.load(Ordering::Acquire)
+}
+#[tauri::command]
+pub fn report_voice_phase(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    phase: String,
+) -> Result<(), String> {
+    if window.label() != "voice"
+        || ![
+            "HIDDEN",
+            "IDLE",
+            "LISTENING",
+            "TRANSCRIBING",
+            "THINKING",
+            "EXECUTING",
+            "SPEAKING",
+            "WAITING_CONFIRMATION",
+            "SUCCESS",
+            "ERROR",
+        ]
+        .contains(&phase.as_str())
+    {
+        return Err("BLOCKED".into());
+    }
+    *app.state::<VoiceRuntime>()
+        .phase
+        .lock()
+        .map_err(|_| "VOICE_BUSY")? = phase;
+    Ok(())
+}
+pub fn request_activation(app: &tauri::AppHandle) -> Result<bool, String> {
+    if !is_active(app) {
+        activate(app)?;
+        return Ok(true);
+    }
+    let state = app.state::<VoiceRuntime>();
+    let mut phase = state.phase.lock().map_err(|_| "VOICE_BUSY")?;
+    if [
+        "LISTENING",
+        "TRANSCRIBING",
+        "THINKING",
+        "EXECUTING",
+        "SPEAKING",
+        "WAITING_CONFIRMATION",
+    ]
+    .contains(&phase.as_str())
+    {
+        return Ok(false);
+    }
+    *phase = "LISTENING".into();
+    drop(phase);
+    app.emit_to("voice", "ace-voice-activate", ())
+        .map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 pub fn create(app: &tauri::App) -> tauri::Result<()> {
@@ -136,6 +208,15 @@ fn default_monitor(
 }
 
 fn restore_position(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
+    if let Some(monitor) = default_monitor(app, window)? {
+        let bounds = work_area(&monitor);
+        let scale = monitor.scale_factor();
+        let width = VOICE_WIDTH.min((bounds.width as f64 / scale - 32.0).max(1.0));
+        let height = VOICE_HEIGHT.min((bounds.height as f64 / scale - 32.0).max(1.0));
+        window
+            .set_size(tauri::LogicalSize::new(width, height))
+            .map_err(|error| error.to_string())?;
+    }
     let window_size = window.outer_size().map_err(|error| error.to_string())?;
     let monitors = window.available_monitors().map_err(|e| e.to_string())?;
     let saved = load_position(app).filter(|position| {
@@ -209,6 +290,10 @@ pub fn activate(app: &tauri::AppHandle) -> Result<(), String> {
         .swap(true, Ordering::AcqRel);
     let result = (|| {
         if first_activation {
+            *app.state::<VoiceRuntime>()
+                .phase
+                .lock()
+                .map_err(|_| "VOICE_BUSY")? = "LISTENING".into();
             app.emit_to("voice", "ace-voice-activate", ())
                 .map_err(|error| error.to_string())?;
         }
@@ -427,7 +512,7 @@ pub fn report_voice_tool_result(
         return Ok(());
     };
     let choices = choices.unwrap_or_default();
-    if choices.len() > 3
+    if choices.len() > 100
         || choices
             .iter()
             .any(|c| c.id.is_empty() || c.id.len() > 40 || c.label.chars().count() > 160)
@@ -467,7 +552,7 @@ pub fn request_tool_confirmation(
         || uuid::Uuid::parse_str(&request_id).is_err()
         || message.chars().count() > 1000
         || choices.is_empty()
-        || choices.len() > 3
+        || choices.len() > 100
         || choices
             .iter()
             .any(|c| c.id.is_empty() || c.id.len() > 40 || c.label.chars().count() > 160)

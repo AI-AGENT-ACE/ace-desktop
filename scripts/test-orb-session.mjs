@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import ts from 'typescript';
 
-async function harness() {
+async function harness({ cloud = false, chime = false } = {}) {
   const hooks = [];
   let cursor = 0;
   let now = 0;
@@ -14,6 +14,7 @@ async function harness() {
     calls = [],
     processors = [],
     effects = [];
+  let captureId = null;
   let result = { transcript: '포트폴리오 열어줘', portfolioRequested: true };
   const clock = {
     setTimeout: (fn, delay = 0) => {
@@ -37,16 +38,41 @@ async function harness() {
   const track = { stop() {} };
   class AudioContext {
     sampleRate = 48000;
+    currentTime = 0;
     state = 'running';
     async resume() {}
     async close() {
       this.state = 'closed';
     }
     createMediaStreamSource() {
-      return { connect() {}, disconnect() {} };
+      return {
+        connect() {
+          calls.push({ name: 'capture_connected' });
+        },
+        disconnect() {},
+      };
     }
     createGain() {
-      return { gain: { value: 0 }, connect() {}, disconnect() {} };
+      return {
+        gain: {
+          value: 0,
+          setValueAtTime() {},
+          linearRampToValueAtTime() {},
+          exponentialRampToValueAtTime() {},
+        },
+        connect() {},
+        disconnect() {},
+      };
+    }
+    createOscillator() {
+      return {
+        frequency: { value: 0 },
+        connect() {},
+        start() {
+          calls.push({ name: 'wake_chime_start' });
+        },
+        stop() {},
+      };
     }
     createScriptProcessor() {
       const p = { onaudioprocess: null, connect() {}, disconnect() {} };
@@ -59,7 +85,7 @@ async function harness() {
     ...clock,
     crypto: globalThis.crypto,
     AudioContext,
-    localStorage: { getItem: (key) => (key === 'ace-wake-chime' ? 'off' : null) },
+    localStorage: { getItem: (key) => (key === 'ace-wake-chime' && !chime ? 'off' : null) },
     document: { documentElement: { dataset: {} } },
     navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track] }) } },
   });
@@ -102,6 +128,7 @@ async function harness() {
     'motion/react': { AnimatePresence: 'presence', useMotionValue: () => ({ set() {} }) },
     './VoiceOverlay': { VoiceOverlay: 'overlay' },
     '@tauri-apps/api/event': {
+      emitTo: async (target, event, payload) => { calls.push({ command: 'emitTo', args: { target, event, payload } }); },
       listen: async (name, fn) => {
         listeners.set(name, fn);
         return () => listeners.delete(name);
@@ -110,9 +137,19 @@ async function harness() {
     '@tauri-apps/api/core': {
       invoke: async (name, args) => {
         calls.push({ name, args });
+        if (name === 'start_audio_input') {
+          captureId = args.sessionId;
+          calls.push({ name: 'capture_connected' });
+          return 48000;
+        }
+        if (name === 'stop_audio_input') {
+          captureId = null;
+        }
         if (name === 'stop_voice_recording') return { recordingId: `recording-${calls.length}` };
         if (name === 'transcribe_local_portfolio')
           return typeof result === 'function' ? result() : result;
+        if (name === 'upload_voice_recording')
+          return { result: typeof result === 'function' ? await result() : result };
         if (name === 'hide_voice_overlay') listeners.get('ace-voice-reset')?.({ payload: null });
       },
     },
@@ -144,7 +181,7 @@ async function harness() {
       {
         context,
         initializeImportMeta: (meta) => {
-          meta.env = { DEV: false, VITE_VOICE_MODE: 'local-portfolio' };
+          meta.env = { DEV: false, VITE_VOICE_MODE: cloud ? 'cloud' : 'local-portfolio' };
         },
       },
     );
@@ -167,12 +204,15 @@ async function harness() {
   };
   const feed = async (rms, frames) => {
     for (let i = 0; i < frames; i++) {
-      processors.at(-1)?.onaudioprocess?.({
-        inputBuffer: {
-          sampleRate: 48000,
-          getChannelData: () => new Float32Array(4800).fill(rms),
-        },
-      });
+      if (captureId)
+        listeners.get('ace-audio-input')?.({
+          payload: {
+            sessionId: captureId,
+            sampleRate: 48000,
+            rms,
+            samples: Array.from(new Float32Array(4800).fill(rms)),
+          },
+        });
       await flush();
     }
   };
@@ -198,6 +238,101 @@ async function harness() {
     },
   };
 }
+
+test('microphone disconnect stops recording without uploading or switching to another device', async () => {
+  const h = await harness({ cloud: true });
+  await h.activate();
+  await h.feed(0.08, 5);
+  const input = h.calls.find((c) => c.name === 'start_audio_input');
+  await h.event('ace-audio-input-error', {
+    sessionId: input.args.sessionId,
+    message: '마이크 연결이 끊겼습니다.',
+  });
+  assert.equal(h.render().props.recording, false);
+  assert.equal(h.render().props.visualState, 'ERROR');
+  assert.equal(h.calls.filter((c) => c.name === 'upload_voice_recording').length, 0);
+  assert.equal(h.calls.filter((c) => c.name === 'start_audio_input').length, 1);
+  await h.feed(0.08, 10);
+  assert.equal(h.calls.filter((c) => c.name === 'upload_voice_recording').length, 0);
+});
+
+test('microphone change cancels the old capture and allows restarting without closing Orb', async () => {
+  const h = await harness();
+  await h.activate();
+  await h.event('ace-audio-input-changed', null);
+  assert.equal(h.render().props.recording, false);
+  assert.equal(h.render().props.canStartRecording, true);
+  h.render().props.onStartRecording();
+  await h.flush();
+  assert.equal(h.render().props.recording, true);
+  assert.equal(h.calls.filter((c) => c.name === 'start_audio_input').length, 2);
+});
+
+test('chatbot answer stays visible, Orb click starts one new recording and X closes it', async () => {
+  const h = await harness({ cloud: true });
+  h.recognize({
+    transcript: '서울 여행 알려줘',
+    type: 'message',
+    content: '### 서울 여행<br>**준비물**',
+  });
+  await h.activate();
+  await h.say();
+  assert.equal(h.render().props.isAnswer, true);
+  assert.equal(h.render().props.canStartRecording, true);
+  assert.equal(h.render().props.recording, false);
+  await h.advance(60000);
+  assert.ok(h.render());
+  const callback = h.render().props.onStartRecording;
+  callback();
+  callback();
+  await h.flush();
+  assert.equal(h.calls.filter((c) => c.name === 'start_voice_recording').length, 2);
+  assert.equal(h.render().props.recording, true);
+  await h.close();
+  assert.equal(h.render(), false);
+});
+
+test('silent follow-up in chatbot mode returns to idle without closing the Orb', async () => {
+  const h = await harness({ cloud: true });
+  h.recognize({ transcript: '안녕', type: 'message', content: '안녕하세요' });
+  await h.activate();
+  await h.say();
+  h.render().props.onStartRecording();
+  await h.flush();
+  await h.feed(0, 100);
+  assert.ok(h.render());
+  assert.equal(h.render().props.canStartRecording, true);
+  assert.equal(h.render().props.recording, false);
+  await h.close();
+  assert.equal(h.render(), false);
+});
+
+test('readiness chime starts after the microphone writer and PCM callback are connected', async () => {
+  const h = await harness({ chime: true });
+  await h.activate();
+  const names = h.calls.map((c) => c.name);
+  assert.ok(names.indexOf('start_voice_recording') >= 0);
+  assert.ok(names.indexOf('capture_connected') >= 0);
+  assert.ok(names.indexOf('start_voice_recording') > names.indexOf('capture_connected'));
+  assert.ok(names.indexOf('wake_chime_start') > names.indexOf('capture_connected'));
+});
+
+test('closing a cloud transcription ignores its delayed chatbot answer', async () => {
+  const h = await harness({ cloud: true });
+  let resolve;
+  h.recognize(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  await h.activate();
+  await h.say();
+  await h.close();
+  resolve({ transcript: '안녕', type: 'message', content: '늦은 답변' });
+  await h.flush();
+  assert.equal(h.render(), false);
+});
 
 test('actual tool completion starts the 3 second close timer; old results cannot close a new session', async () => {
   const h = await harness();
@@ -285,7 +420,7 @@ test('main chat opens a confirmation Orb directly and a click submits only once'
   assert.equal(h.render(), false);
 });
 
-test('confirmation never times out and accepts a spoken number; duplicate click cannot submit again', async () => {
+test('confirmation accepts a spoken number; duplicate click cannot submit again', async () => {
   const h = await harness();
   await h.activate();
   await h.say();
@@ -300,7 +435,7 @@ test('confirmation never times out and accepts a spoken number; duplicate click 
       { id: 'three', label: '셋째 파일' },
     ],
   });
-  await h.feed(0, 110);
+  await h.feed(0, 10);
   assert.ok(h.render());
   assert.equal(h.render().props.choices.length, 3);
   h.recognize({ transcript: '2번', portfolioRequested: false });
@@ -309,6 +444,64 @@ test('confirmation never times out and accepts a spoken number; duplicate click 
   h.render().props.onChoice('two');
   await h.flush();
   assert.equal(h.calls.filter((c) => c.name === 'respond_voice_choice').length, 1);
+});
+
+for (const transcript of ['취소', '아니오', '2번', '취소해 주세요', '아니요 아니요']) {
+  test(`spoken refusal reaches the existing cancellation IPC: ${transcript}`, async () => {
+    const h = await harness();
+    await h.event('ace-tool-confirmation-open', {
+      requestId: 'refusal-test',
+      message: '닫을까요?',
+      choices: [
+        { id: 'yes', label: '닫기' },
+        { id: 'no', label: '취소' },
+      ],
+    });
+    h.recognize({ transcript, portfolioRequested: false });
+    await h.say();
+    const responses = h.calls.filter((c) => c.name === 'respond_voice_choice');
+    assert.equal(responses.length, 1);
+    assert.equal(responses[0].args.choiceId, 'no');
+    assert.equal(h.calls.filter((c) => c.name === 'submit_voice_tool_call').length, 0);
+  });
+}
+for (const fails of [false, true]) {
+  test(`confirmation recognition failure cancels after three attempts: ${fails}`, async () => {
+    const h = await harness();
+    await h.event('ace-tool-confirmation-open', {
+      requestId: 'failed-recognition',
+      message: '닫을까요?',
+      choices: [
+        { id: 'yes', label: '닫기' },
+        { id: 'no', label: '취소' },
+      ],
+    });
+    h.recognize(
+      fails
+        ? () => {
+            throw new Error('LOCAL_STT_FAILED');
+          }
+        : { transcript: '확실하지 않은 말', portfolioRequested: false },
+    );
+    await h.say();
+    await h.say();
+    assert.equal(h.calls.filter((c) => c.name === 'respond_voice_choice').length, 0);
+    await h.say();
+    assert.equal(h.calls.find((c) => c.name === 'respond_voice_choice')?.args.choiceId, 'no');
+  });
+}
+test('silent confirmation cancels rather than leaving an executable request pending', async () => {
+  const h = await harness();
+  await h.event('ace-tool-confirmation-open', {
+    requestId: 'silent-refusal',
+    message: '닫을까요?',
+    choices: [
+      { id: 'yes', label: '닫기' },
+      { id: 'no', label: '취소' },
+    ],
+  });
+  await h.feed(0, 51);
+  assert.equal(h.calls.find((c) => c.name === 'respond_voice_choice')?.args.choiceId, 'no');
 });
 
 test('manual close invalidates in-flight transcription and choice parser rejects unrelated/negated speech', async () => {

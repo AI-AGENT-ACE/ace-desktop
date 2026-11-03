@@ -22,6 +22,7 @@ jobs:
     runs-on: windows-latest
     env:
       VITE_API_BASE_URL: ${{ vars.PRODUCTION_API_URL }}
+      ACE_UPDATER_PUBLIC_KEY: ${{ vars.ACE_UPDATER_PUBLIC_KEY }}
     steps:
       - name: Resolve release tag
         id: release
@@ -53,18 +54,34 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: npm run build
+      - name: Validate ACE wake model release policy and integrity
+        run: node scripts/check-wake-model.mjs
       - name: Build NSIS installer
-        run: node scripts/tauri.mjs build --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          node scripts/prepare-update-release.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/tauri.mjs build --bundles nsis --config src-tauri/tauri.update.generated.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/update-manifest.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: ACE-Windows-${{ steps.release.outputs.tag }}
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/nsis/latest.json
           if-no-files-found: error
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
-          generate_release_notes: true
+          body_path: docs/RELEASE_NOTES.md
           draft: true
-          prerelease: true
+          prerelease: false
           fail_on_unmatched_files: true
-          files: src-tauri/target/release/bundle/nsis/*.exe
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/nsis/latest.json

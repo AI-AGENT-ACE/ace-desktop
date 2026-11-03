@@ -13,6 +13,7 @@ jobs:
     runs-on: windows-latest
     env:
       VITE_API_BASE_URL: https://api.example.invalid
+      ACE_UPDATER_PUBLIC_KEY: ${{ vars.ACE_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,4 +37,7 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Verify Tauri production build
-        run: npm run tauri build -- --no-bundle
+        run: |
+          node scripts/prepare-update-release.mjs --check-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run tauri build -- --no-bundle --config src-tauri/tauri.update.generated.json

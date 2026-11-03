@@ -23,6 +23,17 @@ const render = (content) =>
     ),
   );
 
+test('renders AI HTML emphasis as safe Markdown while preserving code examples', () => {
+  const html = render(
+    '<strong>여행 일정 제안:</strong><br><br>**1일차**\n\n- <em>오전</em>: 도착\n\n`<strong>예시</strong>`\n\n<script>alert(1)</script>',
+  );
+  assert.match(html, /<strong>여행 일정 제안:<\/strong>/);
+  assert.match(html, /<strong>1일차<\/strong>/);
+  assert.match(html, /<em>오전<\/em>/);
+  assert.match(html, /<code>&lt;strong&gt;예시&lt;\/strong&gt;<\/code>/);
+  assert.doesNotMatch(html, /<script>/);
+});
+
 test('renders mixed AI line breaks, headings, emphasis and nested lists', () => {
   const html = render(
     '**서울 여행**<br><br>### 1. **숙박비**<br>- **호텔**: 20만원<br>  - 예시: 명동<br><br>첫 줄<BR />둘째 줄<br/>셋째 줄',

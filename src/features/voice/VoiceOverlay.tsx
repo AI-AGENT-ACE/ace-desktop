@@ -2,6 +2,9 @@ import { useRef, type PointerEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, useReducedMotion, useSpring, useTransform, type MotionValue } from 'motion/react';
 import { X } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { normalizeAssistantMarkdown } from '../chat/markdown';
 import { type OrbVisualState } from './orbMotion';
 import type { VoiceChoice } from './voice-session-policy';
 const entrance = { opacity: [0, 1, 0.7, 1], scale: [0.94, 1.04, 1, 1] };
@@ -27,6 +30,9 @@ export function VoiceOverlay({
   recording,
   onStopRecording,
   onClose,
+  isAnswer = false,
+  canStartRecording = false,
+  onStartRecording,
   choices = [],
   onChoice,
 }: {
@@ -36,6 +42,9 @@ export function VoiceOverlay({
   recording: boolean;
   onStopRecording: () => void;
   onClose: () => void;
+  isAnswer?: boolean;
+  canStartRecording?: boolean;
+  onStartRecording?: () => void;
   choices?: VoiceChoice[];
   onChoice?: (choice: string) => void;
 }) {
@@ -63,7 +72,9 @@ export function VoiceOverlay({
   const endPointer = () => {
     const dragged = pointer.current?.dragging;
     pointer.current = null;
-    if (!dragged && recording) onStopRecording();
+    if (dragged) return;
+    if (recording) onStopRecording();
+    else if (canStartRecording) onStartRecording?.();
   };
 
   const stateText = transcript.trim() || labels[visualState];
@@ -93,7 +104,9 @@ export function VoiceOverlay({
         aria-label={
           recording
             ? 'ACE Orb, 클릭하여 녹음 종료 또는 드래그하여 이동'
-            : 'ACE Orb, 드래그하여 이동'
+            : canStartRecording
+              ? 'ACE Orb, 클릭하여 음성 명령 시작 또는 드래그하여 이동'
+              : 'ACE Orb, 드래그하여 이동'
         }
         initial={reduced ? false : { opacity: 0, scale: 0.94 }}
         animate={reduced ? still : entrance}
@@ -105,7 +118,10 @@ export function VoiceOverlay({
           pointer.current = null;
         }}
         onKeyDown={(event) => {
-          if ((event.key === 'Enter' || event.key === ' ') && recording) onStopRecording();
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          if (recording) onStopRecording();
+          else if (canStartRecording) onStartRecording?.();
         }}
       >
         <motion.span className="voice-orb-glow" style={{ opacity: glowOpacity }} />
@@ -116,7 +132,20 @@ export function VoiceOverlay({
         </span>
       </motion.div>
       <div className="voice-orb-bubble" role="status">
-        <p className="voice-orb-transcript">{stateText}</p>
+        {isAnswer ? (
+          <div className="voice-orb-answer markdown">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {normalizeAssistantMarkdown(stateText)}
+            </ReactMarkdown>
+          </div>
+        ) : (
+          <p className="voice-orb-transcript">{stateText}</p>
+        )}
+        {canStartRecording && (
+          <small className="voice-orb-hint">
+            다시 말하려면 Orb를 누르세요. X를 누르면 닫힙니다.
+          </small>
+        )}
         {choices.length > 0 && (
           <div className="voice-orb-choices" aria-label="음성 명령 선택지">
             {choices.map((choice, index) => (

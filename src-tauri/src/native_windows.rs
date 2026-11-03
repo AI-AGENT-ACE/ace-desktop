@@ -3,49 +3,42 @@ use std::{ffi::c_void, path::Path};
 
 #[cfg(windows)]
 pub fn open_with_shell(target: &Path) -> Result<(), &'static str> {
-    use std::os::windows::process::CommandExt;
-    std::process::Command::new("explorer.exe")
-        .arg(target)
-        .creation_flags(0x08000000)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::PermissionDenied {
-                "PERMISSION_DENIED"
-            } else {
-                "EXECUTION_FAILED"
-            }
-        })
-}
-
-#[cfg(windows)]
-pub fn recycle(path: &Path) -> Result<(), &'static str> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::{
-        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
-        SHFILEOPSTRUCTW,
+    use windows::{
+        core::{w, PCWSTR},
+        Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
     };
-    let mut value: Vec<u16> = path.as_os_str().encode_wide().collect();
-    value.extend([0, 0]);
-    let mut operation = SHFILEOPSTRUCTW {
-        wFunc: FO_DELETE,
-        pFrom: PCWSTR(value.as_ptr()),
-        fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT).0 as u16,
-        ..Default::default()
+    // Use the registered file/URL handler and inspect Shell's result. Starting
+    // explorer.exe alone does not establish that the target was accepted.
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(target.as_ptr()),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
     };
-    let code = unsafe { SHFileOperationW(&mut operation) };
-    if code == 0 && !operation.fAnyOperationsAborted.as_bool() {
-        Ok(())
-    } else {
-        Err("PERMISSION_DENIED")
+    match result.0 as isize {
+        value if value > 32 => Ok(()),
+        5 => Err("PERMISSION_DENIED"),
+        2 | 3 => Err("FILE_NOT_FOUND"),
+        _ => Err("EXECUTION_FAILED"),
     }
 }
 
 #[cfg(windows)]
-pub fn clipboard_write(text: &str) -> Result<(), &'static str> {
+pub fn recycle(path: &Path) -> Result<(), &'static str> {
+    crate::recycle_bin::recycle(path)
+}
+
+#[cfg(windows)]
+pub fn clipboard_write(app: &tauri::AppHandle, text: &str) -> Result<(), &'static str> {
+    use tauri::Manager;
     use windows::Win32::{
-        Foundation::HANDLE,
+        Foundation::{GlobalFree, HANDLE, HWND},
         System::{
             DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
@@ -53,20 +46,29 @@ pub fn clipboard_write(text: &str) -> Result<(), &'static str> {
         },
     };
     let utf16: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    let owner = app
+        .get_webview_window("main")
+        .ok_or("CLIPBOARD_DENIED")?
+        .hwnd()
+        .map_err(|_| "CLIPBOARD_DENIED")?;
     unsafe {
-        OpenClipboard(None).map_err(|_| "CLIPBOARD_DENIED")?;
+        OpenClipboard(Some(HWND(owner.0))).map_err(|_| "CLIPBOARD_DENIED")?;
         let result = (|| {
-            EmptyClipboard().map_err(|_| "CLIPBOARD_DENIED")?;
             let memory =
                 GlobalAlloc(GMEM_MOVEABLE, utf16.len() * 2).map_err(|_| "CLIPBOARD_DENIED")?;
             let pointer = GlobalLock(memory) as *mut u16;
             if pointer.is_null() {
+                let _ = GlobalFree(Some(memory));
                 return Err("CLIPBOARD_DENIED");
             }
             std::ptr::copy_nonoverlapping(utf16.as_ptr(), pointer, utf16.len());
             let _ = GlobalUnlock(memory);
-            SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(memory.0)))
-                .map_err(|_| "CLIPBOARD_DENIED")?;
+            if EmptyClipboard().is_err()
+                || SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(memory.0))).is_err()
+            {
+                let _ = GlobalFree(Some(memory));
+                return Err("CLIPBOARD_DENIED");
+            }
             Ok(())
         })();
         let _ = CloseClipboard();
@@ -80,32 +82,52 @@ pub fn clipboard_read() -> Result<String, &'static str> {
         Foundation::HGLOBAL,
         System::{
             DataExchange::{
-                CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+                CloseClipboard, CountClipboardFormats, GetClipboardData,
+                IsClipboardFormatAvailable, OpenClipboard,
             },
-            Memory::{GlobalLock, GlobalUnlock},
+            Memory::{GlobalLock, GlobalSize, GlobalUnlock},
             Ole::CF_UNICODETEXT,
         },
     };
     unsafe {
         if IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_err() {
-            return Err("CLIPBOARD_DENIED");
+            return if CountClipboardFormats() == 0 {
+                Ok(String::new())
+            } else {
+                Err("CLIPBOARD_UNSUPPORTED_FORMAT")
+            };
         }
         OpenClipboard(None).map_err(|_| "CLIPBOARD_DENIED")?;
         let result = (|| {
             let handle =
                 GetClipboardData(CF_UNICODETEXT.0 as u32).map_err(|_| "CLIPBOARD_DENIED")?;
             let memory = HGLOBAL(handle.0);
+            let bytes = GlobalSize(memory);
+            if bytes == 0 || bytes > 131074 || !bytes.is_multiple_of(2) {
+                return Err("CLIPBOARD_DENIED");
+            }
             let pointer = GlobalLock(memory) as *const u16;
             if pointer.is_null() {
                 return Err("CLIPBOARD_DENIED");
             }
             let mut length = 0usize;
-            while length < 65_536 && *pointer.add(length) != 0 {
+            while length < bytes / 2 && *pointer.add(length) != 0 {
                 length += 1;
             }
-            let value = String::from_utf16_lossy(std::slice::from_raw_parts(pointer, length));
+            let value = if length == bytes / 2 {
+                Err("CLIPBOARD_DENIED")
+            } else {
+                String::from_utf16(std::slice::from_raw_parts(pointer, length))
+                    .map_err(|_| "CLIPBOARD_DENIED")
+            };
             let _ = GlobalUnlock(memory);
-            Ok(value)
+            value.and_then(|text| {
+                if text.len() > 65536 {
+                    Err("CLIPBOARD_DENIED")
+                } else {
+                    Ok(text)
+                }
+            })
         })();
         let _ = CloseClipboard();
         result
@@ -113,18 +135,43 @@ pub fn clipboard_read() -> Result<String, &'static str> {
 }
 
 #[cfg(windows)]
-pub fn capture_primary(path: &Path) -> Result<(), &'static str> {
+pub fn capture_rect_to_file(
+    file: &mut std::fs::File,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), &'static str> {
     use windows::Win32::{
         Foundation::HWND,
         Graphics::Gdi::{
             BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-            GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+            GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT,
             DIB_RGB_COLORS, SRCCOPY,
         },
-        UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN},
     };
-    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    if width == 0 || height == 0 || width as u64 * height as u64 > 64 * 1024 * 1024 {
+        return Err("SCREEN_CAPTURE_FAILED");
+    }
+    let width = width as i32;
+    let height = height as i32;
+    use windows::Win32::UI::HiDpi::{
+        SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    struct Awareness(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT);
+    impl Drop for Awareness {
+        fn drop(&mut self) {
+            unsafe {
+                SetThreadDpiAwarenessContext(self.0);
+            }
+        }
+    }
+    let previous =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if previous.0.is_null() {
+        return Err("SCREEN_CAPTURE_FAILED");
+    }
+    let _awareness = Awareness(previous);
     if width <= 0 || height <= 0 {
         return Err("SCREEN_CAPTURE_FAILED");
     }
@@ -136,11 +183,35 @@ pub fn capture_primary(path: &Path) -> Result<(), &'static str> {
         let memory = CreateCompatibleDC(Some(screen));
         let bitmap = CreateCompatibleBitmap(screen, width, height);
         if memory.is_invalid() || bitmap.is_invalid() {
+            if !memory.is_invalid() {
+                let _ = DeleteDC(memory);
+            }
+            if !bitmap.is_invalid() {
+                let _ = DeleteObject(bitmap.into());
+            }
             let _ = ReleaseDC(Some(HWND::default()), screen);
             return Err("SCREEN_CAPTURE_FAILED");
         }
         let old = SelectObject(memory, bitmap.into());
-        let copied = BitBlt(memory, 0, 0, width, height, Some(screen), 0, 0, SRCCOPY).is_ok();
+        if old.is_invalid() || old.0 as isize == -1 {
+            let _ = DeleteObject(bitmap.into());
+            let _ = DeleteDC(memory);
+            let _ = ReleaseDC(Some(HWND::default()), screen);
+            return Err("SCREEN_CAPTURE_FAILED");
+        }
+        let copied = BitBlt(
+            memory,
+            0,
+            0,
+            width,
+            height,
+            Some(screen),
+            x,
+            y,
+            SRCCOPY | CAPTUREBLT,
+        )
+        .is_ok();
+        let _ = SelectObject(memory, old);
         let mut info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -167,111 +238,28 @@ pub fn capture_primary(path: &Path) -> Result<(), &'static str> {
         } else {
             0
         };
-        let _ = SelectObject(memory, old);
         let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(memory);
         let _ = ReleaseDC(Some(HWND::default()), screen);
-        if lines == 0 {
+        if lines != height {
             return Err("SCREEN_CAPTURE_FAILED");
         }
         for pixel in bgra.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
             pixel[3] = 255;
         }
-        let file = std::fs::File::create(path).map_err(|_| "SCREEN_CAPTURE_FAILED")?;
-        let mut encoder = png::Encoder::new(file, width as u32, height as u32);
+        let mut encoder = png::Encoder::new(&mut *file, width as u32, height as u32);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder
+        let mut writer = encoder
             .write_header()
-            .and_then(|mut writer| writer.write_image_data(&bgra))
-            .map_err(|_| "SCREEN_CAPTURE_FAILED")
+            .map_err(|_| "SCREEN_CAPTURE_FAILED")?;
+        writer
+            .write_image_data(&bgra)
+            .map_err(|_| "SCREEN_CAPTURE_FAILED")?;
+        writer.finish().map_err(|_| "SCREEN_CAPTURE_FAILED")?;
+        file.sync_all().map_err(|_| "SCREEN_CAPTURE_FAILED")
     }
-}
-
-#[cfg(windows)]
-pub fn control_window(process_name: &str, action: &str) -> Result<(), &'static str> {
-    use windows::{
-        core::BOOL,
-        Win32::{
-            Foundation::{HWND, LPARAM},
-            UI::WindowsAndMessaging::{
-                EnumWindows, SetForegroundWindow, ShowWindow, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
-            },
-        },
-    };
-    struct Context {
-        target: String,
-        found: HWND,
-    }
-    unsafe extern "system" fn visit(hwnd: HWND, parameter: LPARAM) -> BOOL {
-        use windows::{
-            core::{BOOL, PWSTR},
-            Win32::{
-                Foundation::CloseHandle,
-                System::Threading::{
-                    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-                    PROCESS_QUERY_LIMITED_INFORMATION,
-                },
-                UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible},
-            },
-        };
-        let context = &mut *(parameter.0 as *mut Context);
-        if !IsWindowVisible(hwnd).as_bool() {
-            return BOOL(1);
-        }
-        let mut pid = 0;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return BOOL(1);
-        };
-        let mut buffer = [0u16; 1024];
-        let mut size = buffer.len() as u32;
-        let matches = QueryFullProcessImageNameW(
-            process,
-            PROCESS_NAME_WIN32,
-            PWSTR(buffer.as_mut_ptr()),
-            &mut size,
-        )
-        .is_ok()
-            && Path::new(&String::from_utf16_lossy(&buffer[..size as usize]))
-                .file_name()
-                .and_then(|v| v.to_str())
-                .is_some_and(|v| v.eq_ignore_ascii_case(&context.target));
-        let _ = CloseHandle(process);
-        if matches {
-            context.found = hwnd;
-            BOOL(0)
-        } else {
-            BOOL(1)
-        }
-    }
-    let mut context = Context {
-        target: process_name.into(),
-        found: HWND::default(),
-    };
-    let _ = unsafe { EnumWindows(Some(visit), LPARAM((&mut context as *mut Context) as isize)) };
-    if context.found.is_invalid() {
-        return Err("WINDOW_NOT_FOUND");
-    }
-    unsafe {
-        match action {
-            "app.focus" => {
-                let _ = ShowWindow(context.found, SW_RESTORE);
-                if !SetForegroundWindow(context.found).as_bool() {
-                    return Err("WINDOW_NOT_FOUND");
-                }
-            }
-            "app.minimize" => {
-                let _ = ShowWindow(context.found, SW_MINIMIZE);
-            }
-            "app.maximize" => {
-                let _ = ShowWindow(context.found, SW_MAXIMIZE);
-            }
-            _ => return Err("BLOCKED_BY_POLICY"),
-        }
-    }
-    Ok(())
 }
 
 #[cfg(windows)]
@@ -322,7 +310,7 @@ pub fn recycle(_: &std::path::Path) -> Result<(), &'static str> {
     Err("BLOCKED_BY_POLICY")
 }
 #[cfg(not(windows))]
-pub fn clipboard_write(_: &str) -> Result<(), &'static str> {
+pub fn clipboard_write(_: &tauri::AppHandle, _: &str) -> Result<(), &'static str> {
     Err("BLOCKED_BY_POLICY")
 }
 #[cfg(not(windows))]
@@ -330,13 +318,16 @@ pub fn clipboard_read() -> Result<String, &'static str> {
     Err("BLOCKED_BY_POLICY")
 }
 #[cfg(not(windows))]
-pub fn capture_primary(_: &std::path::Path) -> Result<(), &'static str> {
+pub fn capture_rect_to_file(
+    _: &mut std::fs::File,
+    _: i32,
+    _: i32,
+    _: u32,
+    _: u32,
+) -> Result<(), &'static str> {
     Err("BLOCKED_BY_POLICY")
 }
-#[cfg(not(windows))]
-pub fn control_window(_: &str, _: &str) -> Result<(), &'static str> {
-    Err("BLOCKED_BY_POLICY")
-}
+
 #[cfg(not(windows))]
 pub fn lock_workstation() -> Result<(), &'static str> {
     Err("BLOCKED_BY_POLICY")

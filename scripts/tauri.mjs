@@ -1,6 +1,14 @@
 import { loadEnv } from 'vite';
 import { run } from '@tauri-apps/cli';
+import { spawnSync } from 'node:child_process';
 const args = process.argv.slice(2);
+if (args[0] === 'build' && !args.includes('--debug')) {
+  const checked = spawnSync(process.execPath, ['scripts/check-wake-model.mjs'], {
+    stdio: 'inherit',
+  });
+  if (checked.error) throw checked.error;
+  if (checked.status !== 0) process.exit(checked.status ?? 1);
+}
 if (['dev', 'build'].includes(args[0])) {
   const env = loadEnv(args[0] === 'dev' ? 'development' : 'production', process.cwd(), 'VITE_');
   const url = new URL(process.env.VITE_API_BASE_URL || env.VITE_API_BASE_URL || '');

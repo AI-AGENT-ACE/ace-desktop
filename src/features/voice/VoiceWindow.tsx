@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emitTo } from '@tauri-apps/api/event';
 import { AnimatePresence, useMotionValue } from 'motion/react';
 import { VoiceOverlay } from './VoiceOverlay';
 import type { OrbVisualState } from './orbMotion';
@@ -42,6 +42,9 @@ const voiceErrorMessage = (cause: unknown) => {
     VOICE_RECORDING_TOO_SHORT: recognitionRetry,
     UNAUTHENTICATED: '메인 창에서 다시 로그인해 주세요.',
     AI_SERVER_UNAVAILABLE: '음성 AI 서버가 연결되지 않았어요.',
+    VOICE_TIMEOUT: '음성 AI 응답 시간이 초과됐어요. 잠시 후 다시 요청해 주세요.',
+    VOICE_INVALID_RESPONSE: '음성 AI의 답변을 처리하지 못했어요. 다시 요청해 주세요.',
+    VOICE_PROCESSING_FAILED: '음성 AI 처리에 실패했어요. 다시 요청해 주세요.',
     LOCAL_STT_NOT_INSTALLED: '로컬 음성 인식 모델을 설치해 주세요.',
     LOCAL_STT_FAILED: recognitionRetry,
   };
@@ -51,20 +54,19 @@ const voiceErrorMessage = (cause: unknown) => {
 export function VoiceWindow() {
   const [text, setText] = useState('');
   const [visualState, setVisualState] = useState<OrbVisualState>('IDLE');
+  useEffect(() => {
+    void invoke('report_voice_phase', { phase: visualState }).catch(() => undefined);
+  }, [visualState]);
   const [recording, setRecording] = useState(false);
   const [visible, setVisible] = useState(false);
   const [activation, setActivation] = useState(0);
   const [choices, setChoices] = useState<VoiceChoice[]>([]);
+  const [isAnswer, setIsAnswer] = useState(false);
+  const [canStartRecording, setCanStartRecording] = useState(false);
   const audioLevel = useMotionValue(0);
   const open = useRef(false);
   const generation = useRef(0);
-  const audio = useRef<{
-    stream: MediaStream;
-    context: AudioContext;
-    source: MediaStreamAudioSourceNode;
-    processor: ScriptProcessorNode;
-    gain: GainNode;
-  } | null>(null);
+  const audio = useRef<(() => void)[] | null>(null);
   const writeQueue = useRef<Promise<void>>(Promise.resolve());
   const writeFailure = useRef<unknown>(null);
   const recordingActive = useRef(false);
@@ -73,8 +75,11 @@ export function VoiceWindow() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingId = useRef<string | null>(null);
   const currentChoices = useRef<VoiceChoice[]>([]);
+  const unrecognizedChoices = useRef(0);
   const retryMode = useRef<CaptureMode | null>(null);
   const mounted = useRef(true);
+  const persistent = useRef(false);
+  const restartLock = useRef(false);
 
   const valid = (token: number) => mounted.current && open.current && generation.current === token;
   const clearTimer = () => {
@@ -82,6 +87,7 @@ export function VoiceWindow() {
     timer.current = null;
   };
   const updateChoices = (next: VoiceChoice[]) => {
+    unrecognizedChoices.current = 0;
     currentChoices.current = next;
     setChoices(next);
   };
@@ -92,35 +98,49 @@ export function VoiceWindow() {
     setRecording(false);
     audioLevel.set(0);
     if (!current) return;
-    current.processor.onaudioprocess = null;
-    current.processor.disconnect();
-    current.source.disconnect();
-    current.gain.disconnect();
-    current.stream.getTracks().forEach((track) => track.stop());
-    await current.context.close().catch(() => undefined);
+    current.forEach((unlisten) => unlisten());
+    await invoke('stop_audio_input').catch(() => undefined);
   };
   const close = async () => {
+    void emitTo('main', 'ace-speech-stop').catch(() => undefined);
     open.current = false;
     generation.current += 1;
     clearTimer();
     retryMode.current = null;
     pendingId.current = null;
+    persistent.current = false;
+    setIsAnswer(false);
+    setCanStartRecording(false);
     updateChoices([]);
     setVisible(false);
     await releaseAudio();
     await writeQueue.current.catch(() => undefined);
     await invoke('hide_voice_overlay').catch(() => undefined);
   };
-  const showSuccess = (message: string) => {
+  const showSuccess = (message: string, answer = false) => {
+    void emitTo('main', 'ace-speech-request', message).catch(() => undefined);
     clearTimer();
     retryMode.current = null;
     updateChoices([]);
     setText(message);
     setVisualState('SUCCESS');
+    setIsAnswer(answer);
+    if (answer) persistent.current = true;
+    setCanStartRecording(persistent.current);
+    if (persistent.current) return;
     const token = generation.current;
     timer.current = setTimeout(() => {
       if (valid(token)) void close();
     }, SUCCESS_CLOSE_MS);
+  };
+  const idleOrClose = async () => {
+    if (!persistent.current) return close();
+    clearTimer();
+    retryMode.current = null;
+    setIsAnswer(false);
+    setVisualState('IDLE');
+    setText('다시 말하려면 Orb를 눌러 주세요.');
+    setCanStartRecording(true);
   };
   const startRetryIfReady = () => {
     const next = retryMode.current;
@@ -131,6 +151,8 @@ export function VoiceWindow() {
   const retry = (message: string, mode: CaptureMode = 'retry') => {
     clearTimer();
     setText(message);
+    setIsAnswer(false);
+    setCanStartRecording(false);
     setVisualState(mode === 'confirmation' ? 'WAITING_CONFIRMATION' : 'LISTENING');
     retryMode.current = mode;
     startRetryIfReady();
@@ -173,7 +195,7 @@ export function VoiceWindow() {
       setText('실행 응답을 확인하지 못했어요. 메인 창에서 결과를 확인해 주세요.');
       setVisualState('ERROR');
       timer.current = setTimeout(() => {
-        if (valid(token)) void close();
+        if (valid(token)) void idleOrClose();
       }, 5000);
     }, 10000);
     try {
@@ -185,44 +207,18 @@ export function VoiceWindow() {
     }
   };
   const startCapture = async (mode: CaptureMode) => {
+    await emitTo('main', 'ace-speech-stop').catch(() => undefined);
     const token = ++generation.current;
     clearTimer();
     await releaseAudio();
     if (!valid(token)) return;
+    setIsAnswer(false);
+    setCanStartRecording(false);
     setVisualState(mode === 'confirmation' ? 'WAITING_CONFIRMATION' : 'LISTENING');
-    if (mode === 'command') setText('듣고 있어요. 말씀해 주세요.');
-    let stream: MediaStream | null = null;
-    let context: AudioContext | null = null;
+    if (mode === 'command') setText('마이크를 준비하고 있어요.');
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      if (!valid(token)) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      context = new AudioContext();
-      await context.resume();
-      if (!valid(token)) {
-        stream.getTracks().forEach((track) => track.stop());
-        await context.close().catch(() => undefined);
-        return;
-      }
-      const source = context.createMediaStreamSource(stream);
-      const processor = context.createScriptProcessor(4096, 1, 1);
-      const gain = context.createGain();
-      gain.gain.value = 0;
-      audio.current = { stream, context, source, processor, gain };
-      await invoke('start_voice_recording', {
-        sampleRate: Math.round(context.sampleRate),
-        channels: 1,
-      });
-      if (!valid(token)) return;
+      const subscriptions: (() => void)[] = [];
+      audio.current = subscriptions;
       recordingActive.current = true;
       setRecording(true);
       writeFailure.current = null;
@@ -243,9 +239,12 @@ export function VoiceWindow() {
           }
           if (!endpoint.hasSpeech) {
             await invoke('cancel_voice_recording');
-            if (mode === 'confirmation') retryMode.current = 'confirmation';
-            else if (mode === 'command') retry(recognitionRetry);
-            else await close();
+            if (mode === 'confirmation') {
+              await choose(
+                currentChoices.current.some((choice) => choice.id === 'no') ? 'no' : 'cancel',
+              );
+            } else if (mode === 'command') retry(recognitionRetry);
+            else await idleOrClose();
             return;
           }
           setVisualState('TRANSCRIBING');
@@ -265,7 +264,22 @@ export function VoiceWindow() {
             if (!valid(token)) return;
             if (mode === 'confirmation') {
               const choice = resolveVoiceChoice(recognized.transcript, currentChoices.current);
+              if (import.meta.env.DEV)
+                console.info('VOICE_CHOICE_RESOLVED', {
+                  requestId: pendingId.current,
+                  recognized: recognized.transcript.trim().length > 0,
+                  outcome:
+                    choice === 'no' || choice === 'cancel'
+                      ? 'cancel'
+                      : choice
+                        ? 'selected'
+                        : 'unmatched',
+                });
               if (choice) await choose(choice);
+              else if (++unrecognizedChoices.current >= 3)
+                await choose(
+                  currentChoices.current.some((choice) => choice.id === 'no') ? 'no' : 'cancel',
+                );
               else
                 retry(
                   '선택을 확인하지 못했어요. 네, 아니오 또는 선택지 번호를 말해 주세요.',
@@ -304,45 +318,128 @@ export function VoiceWindow() {
             )
               await submit(uploaded.result.tool, uploaded.result.arguments);
             else
-              showSuccess(uploaded.result.content || uploaded.result.transcript || '완료했어요.');
+              showSuccess(
+                uploaded.result.content || uploaded.result.transcript || '완료했어요.',
+                true,
+              );
           }
         } catch (cause) {
-          if (valid(token))
-            retry(voiceErrorMessage(cause), mode === 'confirmation' ? 'confirmation' : 'retry');
+          if (valid(token)) {
+            if (mode === 'confirmation' && ++unrecognizedChoices.current >= 3)
+              await choose(
+                currentChoices.current.some((choice) => choice.id === 'no') ? 'no' : 'cancel',
+              );
+            else
+              retry(voiceErrorMessage(cause), mode === 'confirmation' ? 'confirmation' : 'retry');
+          }
         } finally {
           finalizing.current = false;
           startRetryIfReady();
         }
       };
       finishRef.current = finish;
-      processor.onaudioprocess = (event) => {
-        if (!valid(token) || !recordingActive.current || stopping) return;
-        const channel = event.inputBuffer.getChannelData(0);
-        const rms = Math.sqrt(
-          channel.reduce((sum, sample) => sum + sample * sample, 0) / channel.length,
-        );
-        audioLevel.set(Math.min(1, rms / 0.15));
-        const samples = Array.from(channel);
-        writeQueue.current = writeQueue.current
-          .then(() => invoke<void>('append_voice_recording_samples', { samples }))
-          .catch((cause) => {
-            writeFailure.current = cause;
-          });
-        if (endpoint.feed(rms, (channel.length / event.inputBuffer.sampleRate) * 1000))
-          void finish();
-      };
-      source.connect(processor);
-      processor.connect(gain);
-      gain.connect(context.destination);
+      const sessionId = crypto.randomUUID();
+      subscriptions.push(
+        await listen<{ sessionId: string; sampleRate: number; rms: number; samples: number[] }>(
+          'ace-audio-input',
+          ({ payload }) => {
+            if (
+              payload.sessionId !== sessionId ||
+              !valid(token) ||
+              !recordingActive.current ||
+              stopping
+            )
+              return;
+            audioLevel.set(Math.min(1, payload.rms / 0.15));
+            const samples = payload.samples;
+            writeQueue.current = writeQueue.current
+              .then(() => invoke<void>('append_voice_recording_samples', { samples }))
+              .catch((cause) => {
+                writeFailure.current = cause;
+              });
+            if (endpoint.feed(payload.rms, (samples.length / payload.sampleRate) * 1000))
+              void finish();
+          },
+        ),
+      );
+      subscriptions.push(
+        await listen<{ sessionId: string; message: string }>(
+          'ace-audio-input-error',
+          ({ payload }) => {
+            if (payload.sessionId !== sessionId || !valid(token)) return;
+            generation.current += 1;
+            clearTimer();
+            retryMode.current = null;
+            setCanStartRecording(false);
+            void releaseAudio()
+              .then(() => writeQueue.current)
+              .then(() => invoke('cancel_voice_recording'))
+              .catch(() => undefined)
+              .finally(() => {
+                if (open.current && mounted.current) setCanStartRecording(true);
+              });
+            setVisualState('ERROR');
+            setText(payload.message);
+          },
+        ),
+      );
+      subscriptions.push(
+        await listen('ace-audio-input-changed', () => {
+          if (!valid(token)) return;
+          generation.current += 1;
+          clearTimer();
+          retryMode.current = null;
+          setCanStartRecording(false);
+          void releaseAudio()
+            .then(() => writeQueue.current)
+            .then(() => invoke('cancel_voice_recording'))
+            .catch(() => undefined)
+            .finally(() => {
+              if (!open.current || !mounted.current) return;
+              if (currentChoices.current.length) {
+                retryMode.current = 'confirmation';
+                startRetryIfReady();
+              } else setCanStartRecording(true);
+            });
+          setVisualState(currentChoices.current.length ? 'WAITING_CONFIRMATION' : 'IDLE');
+          setText(
+            currentChoices.current.length
+              ? '마이크를 변경했습니다. 선택을 말씀해 주세요.'
+              : '마이크를 변경했습니다. Orb를 눌러 다시 말씀해 주세요.',
+          );
+        }),
+      );
+      if (!valid(token)) {
+        subscriptions.forEach((fn) => fn());
+        return;
+      }
+      // Pause delivery until the WAV writer is ready; discard early PCM chunks.
+      recordingActive.current = false;
+      const sampleRate = await invoke<number>('start_audio_input', { sessionId, monitor: false });
+      if (!valid(token)) {
+        await releaseAudio();
+        return;
+      }
+      await invoke('start_voice_recording', { sampleRate, channels: 1 });
+      if (!valid(token)) {
+        await releaseAudio();
+        await invoke('cancel_voice_recording');
+        return;
+      }
+      recordingActive.current = true;
+      if (mode === 'command') {
+        setText('듣고 있어요. 말씀해 주세요.');
+        // Signal readiness only after the microphone and PCM callback are connected.
+        void playWakeChime().catch(() => undefined);
+      }
     } catch (cause) {
-      stream?.getTracks().forEach((track) => track.stop());
-      if (context && context.state !== 'closed') await context.close().catch(() => undefined);
       if (!valid(token)) return;
       await releaseAudio();
       await invoke('cancel_voice_recording').catch(() => undefined);
       setVisualState('ERROR');
       setText(`마이크를 시작하지 못했어요. ${voiceErrorMessage(cause)}`);
-      if (mode !== 'confirmation')
+      setCanStartRecording(persistent.current && mode !== 'confirmation');
+      if (mode !== 'confirmation' && !persistent.current)
         timer.current = setTimeout(() => {
           if (valid(token)) void close();
         }, 5000);
@@ -367,12 +464,7 @@ export function VoiceWindow() {
       updateChoices([]);
       setText('듣기 준비 중이에요.');
       setVisualState('LISTENING');
-      const token = ++generation.current;
-      void playWakeChime()
-        .catch(() => undefined)
-        .then(() => {
-          if (valid(token)) void startCapture('command');
-        });
+      void startCapture('command');
     });
     void register('ace-voice-reset', () => {
       open.current = false;
@@ -380,11 +472,17 @@ export function VoiceWindow() {
       clearTimer();
       retryMode.current = null;
       pendingId.current = null;
+      persistent.current = false;
+      setIsAnswer(false);
+      setCanStartRecording(false);
       updateChoices([]);
       setVisible(false);
       void releaseAudio();
     });
     void register<ToolResult>('ace-tool-confirmation-open', async (result) => {
+      persistent.current = false;
+      setIsAnswer(false);
+      setCanStartRecording(false);
       const token = ++generation.current;
       clearTimer();
       retryMode.current = null;
@@ -453,6 +551,21 @@ export function VoiceWindow() {
             transcript={text}
             audioLevel={audioLevel}
             recording={recording}
+            isAnswer={isAnswer}
+            canStartRecording={canStartRecording}
+            onStartRecording={() => {
+              if (
+                restartLock.current ||
+                recordingActive.current ||
+                finalizing.current ||
+                pendingId.current
+              )
+                return;
+              restartLock.current = true;
+              void startCapture('command').finally(() => {
+                restartLock.current = false;
+              });
+            }}
             choices={choices}
             onChoice={(choice) => void choose(choice)}
             onClose={() => void close()}

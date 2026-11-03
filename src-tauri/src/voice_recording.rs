@@ -14,7 +14,8 @@ use uuid::Uuid;
 const WAV_HEADER_SIZE: u64 = 44;
 const MAX_RECORDING_SECONDS: u64 = 30 * 60;
 const MAX_CHUNK_SAMPLES: usize = 32_768;
-const MAX_UPLOAD_ATTEMPTS: u8 = 3;
+// A POST may already have reached the AI. A new user request is required after failure.
+const MAX_UPLOAD_ATTEMPTS: u8 = 1;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 const MIN_RECORDING_DURATION_MS: u64 = 250;
 
@@ -240,10 +241,16 @@ fn valid_sample_chunk(samples: &[f32]) -> bool {
         && samples.len() <= MAX_CHUNK_SAMPLES
         && samples.iter().all(|v| v.is_finite())
 }
-fn retryable_status(status: reqwest::StatusCode) -> bool {
-    status == reqwest::StatusCode::REQUEST_TIMEOUT
-        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-        || status.is_server_error()
+fn public_voice_failure_code(body: Option<&Value>) -> &'static str {
+    match body
+        .and_then(|body| body.get("code"))
+        .and_then(Value::as_str)
+    {
+        Some("VOICE_TIMEOUT") => "VOICE_TIMEOUT",
+        Some("AI_SERVER_UNAVAILABLE") => "AI_SERVER_UNAVAILABLE",
+        Some("VOICE_INVALID_RESPONSE") => "VOICE_INVALID_RESPONSE",
+        _ => "VOICE_PROCESSING_FAILED",
+    }
 }
 
 #[tauri::command]
@@ -454,7 +461,7 @@ pub async fn upload_voice_recording(
         ))
         .timeout(configured_duration(
             "ACE_VOICE_PROCESSING_TIMEOUT_SECONDS",
-            60,
+            75,
             1,
             300,
         ))
@@ -507,22 +514,11 @@ pub async fn upload_voice_recording(
                 outcome = Err("UNAUTHENTICATED".into());
                 break;
             }
-            Ok(v) if v.status().as_u16() == 503 => {
-                // Only propagate this fixed public code; never expose arbitrary server bodies.
-                let unavailable = v.json::<Value>().await.ok().is_some_and(|body| {
-                    body.get("code").and_then(Value::as_str) == Some("AI_SERVER_UNAVAILABLE")
-                });
-                outcome = Err("VOICE_PROCESSING_FAILED".into());
-                if unavailable {
-                    outcome = Err("AI_SERVER_UNAVAILABLE".into());
-                    break;
-                }
-            }
             Ok(v) => {
-                outcome = Err("VOICE_PROCESSING_FAILED".into());
-                if !retryable_status(v.status()) {
-                    break;
-                }
+                // Only fixed public codes, never upstream bodies, transcripts or credentials.
+                let body = v.json::<Value>().await.ok();
+                outcome = Err(public_voice_failure_code(body.as_ref()).into());
+                break;
             }
             Err(e) if e.is_timeout() => outcome = Err("VOICE_TIMEOUT".into()),
             Err(_) => outcome = Err("VOICE_UPLOAD_FAILED".into()),
@@ -640,11 +636,25 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
-    fn retries_only_transient_http_failures() {
-        assert!(retryable_status(reqwest::StatusCode::REQUEST_TIMEOUT));
-        assert!(retryable_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
-        assert!(retryable_status(reqwest::StatusCode::BAD_GATEWAY));
-        assert!(!retryable_status(reqwest::StatusCode::BAD_REQUEST));
-        assert!(!retryable_status(reqwest::StatusCode::UNAUTHORIZED));
+    fn voice_failures_only_expose_fixed_public_codes() {
+        for code in [
+            "VOICE_TIMEOUT",
+            "AI_SERVER_UNAVAILABLE",
+            "VOICE_INVALID_RESPONSE",
+        ] {
+            assert_eq!(
+                public_voice_failure_code(Some(
+                    &serde_json::json!({"code":code,"message":"private"})
+                )),
+                code
+            );
+        }
+        assert_eq!(
+            public_voice_failure_code(Some(
+                &serde_json::json!({"code":"private","message":"private"})
+            )),
+            "VOICE_PROCESSING_FAILED"
+        );
+        assert_eq!(public_voice_failure_code(None), "VOICE_PROCESSING_FAILED");
     }
 }
