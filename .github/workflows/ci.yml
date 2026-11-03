@@ -40,4 +40,4 @@ jobs:
         run: |
           node scripts/prepare-update-release.mjs --check-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm run tauri build -- --no-bundle --config src-tauri/tauri.update.generated.json
+          node scripts/tauri.mjs build --no-bundle --config src-tauri/tauri.update.generated.json
